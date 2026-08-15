@@ -1,6 +1,6 @@
 # MisMeeter
 
-MisMeeter is an experimental iOS microphone bridge for Windows.
+MisMeeter is an experimental iOS microphone bridge for Voicemeeter.
 
 Current milestone:
 

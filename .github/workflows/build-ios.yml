@@ -1,0 +1,78 @@
+name: Build unsigned iOS IPA
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - master
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Show Xcode version
+        run: xcodebuild -version
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Build unsigned app
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project MisMeeter.xcodeproj \
+            -scheme MisMeeter \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath "$PWD/build" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            build | tee xcodebuild.log
+
+      - name: Inspect built app and extension
+        run: |
+          APP="$PWD/build/Build/Products/Release-iphoneos/MisMeeter.app"
+          test -d "$APP"
+          echo "Main app:"
+          ls -la "$APP"
+
+          echo "Embedded PlugIns:"
+          find "$APP/PlugIns" -maxdepth 2 -print || true
+
+          test -d "$APP/PlugIns/MisMeeterWidget.appex"
+
+      - name: Package unsigned IPA
+        run: |
+          APP="$PWD/build/Build/Products/Release-iphoneos/MisMeeter.app"
+          rm -rf "$PWD/package"
+          mkdir -p "$PWD/package/Payload"
+          cp -R "$APP" "$PWD/package/Payload/"
+          cd "$PWD/package"
+          /usr/bin/zip -qry "$GITHUB_WORKSPACE/MisMeeter.ipa" Payload
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: MisMeeter-unsigned
+          path: MisMeeter.ipa
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload build log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: MisMeeter-build-log
+          path: xcodebuild.log
+          if-no-files-found: ignore
+          retention-days: 7

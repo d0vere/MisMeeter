@@ -23,8 +23,10 @@ final class MisMeeterRuntime {
     var onStatusChange: ((String) -> Void)?
     var onMeter: ((Float) -> Void)?
     var onBufferLevel: ((Int) -> Void)?
-    var onPacketsSent: ((UInt64) -> Void)?
     var onAudioDiagnostics: ((Int, Double) -> Void)?
+    var onUnderruns: ((UInt64) -> Void)?
+    var onPacketsSent: ((UInt64) -> Void)?
+    var onPrimedChange: ((Bool) -> Void)?
 
     private init() {
         let tx = VBANTransmitter()
@@ -47,8 +49,16 @@ final class MisMeeterRuntime {
             self?.onBufferLevel?(count)
         }
 
+        transmitter.onUnderruns = { [weak self] count in
+            self?.onUnderruns?(count)
+        }
+
         transmitter.onPacketsSent = { [weak self] count in
             self?.onPacketsSent?(count)
+        }
+
+        transmitter.onPrimedChange = { [weak self] value in
+            self?.onPrimedChange?(value)
         }
     }
 
@@ -71,7 +81,8 @@ final class MisMeeterRuntime {
 
     func start(
         preset: VBANPreset,
-        gainDB: Float
+        gainDB: Float,
+        transmissionMode: VBANTransmissionMode
     ) async throws {
         stateQueue.sync {
             _preset = preset
@@ -80,7 +91,10 @@ final class MisMeeterRuntime {
 
         microphone.gainDB = gainDB
 
-        transmitter.configure(preset: preset)
+        transmitter.configure(
+            preset: preset,
+            transmissionMode: transmissionMode
+        )
         transmitter.setMuted(false)
         transmitter.start()
 

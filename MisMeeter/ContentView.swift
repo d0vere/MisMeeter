@@ -20,6 +20,7 @@ struct ContentView: View {
     @AppStorage("p3Stream") private var p3Stream = "MisMeeter3"
 
     @AppStorage("microphoneGainDB") private var gainDB = 12.0
+    @AppStorage("transmissionMode") private var transmissionModeRaw = VBANTransmissionMode.balanced.rawValue
 
     @State private var isStreaming = MisMeeterRuntime.shared.isStreaming
     @State private var isMuted = MisMeeterRuntime.shared.isMuted
@@ -29,6 +30,8 @@ struct ContentView: View {
     @State private var packetsSent: UInt64 = 0
     @State private var callbackFrames = 0
     @State private var actualIOBufferMS = 0.0
+    @State private var underruns: UInt64 = 0
+    @State private var senderPrimed = false
 
     var body: some View {
         NavigationStack {
@@ -43,6 +46,35 @@ struct ContentView: View {
                     .disabled(isStreaming)
 
                     presetEditor
+                }
+
+                Section("Transmission") {
+                    Picker(
+                        "TX mode",
+                        selection: $transmissionModeRaw
+                    ) {
+                        ForEach(VBANTransmissionMode.allCases) { mode in
+                            Text(mode.title).tag(mode.rawValue)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .disabled(isStreaming)
+
+                    let mode = VBANTransmissionMode(
+                        rawValue: transmissionModeRaw
+                    ) ?? .balanced
+
+                    Text(mode.detail)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    Text(
+                        "Higher stability prebuffers more iPhone audio before sending. " +
+                        "This is intended to make VoiceMeeter Fast/Optimal usable even though iOS " +
+                        "is currently delivering 4800-frame (~100 ms) microphone callbacks."
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 }
 
                 Section("Microphone") {
@@ -124,22 +156,23 @@ struct ContentView: View {
                         LabeledContent("Destination", value: preset.destinationLabel)
                         LabeledContent("Format", value: "48 kHz • PCM16 • Mono")
                         LabeledContent("Packet", value: "256 samples • 5.33 ms")
-                        LabeledContent("FIFO remainder", value: "\(bufferSamples) samples")
+                        LabeledContent("Sender buffer", value: "\(bufferSamples) samples")
                         LabeledContent("Input callback", value: "\(callbackFrames) frames")
                         LabeledContent(
                             "Actual I/O buffer",
                             value: String(format: "%.2f ms", actualIOBufferMS)
                         )
+                        LabeledContent("Sender primed", value: senderPrimed ? "Yes" : "No")
+                        LabeledContent("Underruns", value: "\(underruns)")
                         LabeledContent("Packets sent", value: "\(packetsSent)")
                     }
                 }
 
                 Section {
                     Text(
-                        "v0.5 derives VBAN timing directly from the microphone sample clock. " +
-                        "If iOS produces 512/1024-frame buffers, MisMeeter sends the corresponding " +
-                        "2/4 VBAN packets as a short burst, which is normal VBAN behaviour. " +
-                        "No independent 5.33 ms software timer is used."
+                        "v0.6 prebuffers the large iOS microphone callbacks and emits one 256-sample VBAN " +
+                        "packet every ~5.33 ms. A tiny adaptive clock correction keeps the FIFO centered " +
+                        "without exposing VoiceMeeter to 100 ms packet bursts."
                     )
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -273,16 +306,28 @@ struct ContentView: View {
             }
         }
 
+        MisMeeterRuntime.shared.onAudioDiagnostics = { frames, duration in
+            DispatchQueue.main.async {
+                callbackFrames = frames
+                actualIOBufferMS = duration * 1000
+            }
+        }
+
+        MisMeeterRuntime.shared.onUnderruns = { value in
+            DispatchQueue.main.async {
+                underruns = value
+            }
+        }
+
         MisMeeterRuntime.shared.onPacketsSent = { value in
             DispatchQueue.main.async {
                 packetsSent = value
             }
         }
 
-        MisMeeterRuntime.shared.onAudioDiagnostics = { frames, duration in
+        MisMeeterRuntime.shared.onPrimedChange = { value in
             DispatchQueue.main.async {
-                callbackFrames = frames
-                actualIOBufferMS = duration * 1000
+                senderPrimed = value
             }
         }
     }
@@ -307,9 +352,14 @@ struct ContentView: View {
         }
 
         do {
+            let mode = VBANTransmissionMode(
+                rawValue: transmissionModeRaw
+            ) ?? .balanced
+
             try await MisMeeterRuntime.shared.start(
                 preset: preset,
-                gainDB: Float(gainDB)
+                gainDB: Float(gainDB),
+                transmissionMode: mode
             )
 
             isStreaming = true
@@ -332,6 +382,8 @@ struct ContentView: View {
             packetsSent = 0
             callbackFrames = 0
             actualIOBufferMS = 0
+            underruns = 0
+            senderPrimed = false
             status = "Stopped"
         }
     }

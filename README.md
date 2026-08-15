@@ -1,6 +1,6 @@
 # MisMeeter v0.3
 
-iPhone microphone -> VBAN -> VoiceMeeter, without a Windows client.
+iPhone microphone -> VBAN -> VoiceMeeter
 
 ## Features
 - Microphone capture with AVAudioEngine

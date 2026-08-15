@@ -42,14 +42,29 @@ jobs:
       - name: Inspect built app and extension
         run: |
           APP="$PWD/build/Build/Products/Release-iphoneos/MisMeeter.app"
+          EXT="$APP/PlugIns/MisMeeterWidget.appex"
+
           test -d "$APP"
-          echo "Main app:"
+          test -d "$EXT"
+
+          echo "===== MAIN APP ====="
           ls -la "$APP"
 
-          echo "Embedded PlugIns:"
-          find "$APP/PlugIns" -maxdepth 2 -print || true
+          echo "===== EXTENSION ====="
+          ls -la "$EXT"
 
-          test -d "$APP/PlugIns/MisMeeterWidget.appex"
+          echo "===== EXTENSION INFO.PLIST ====="
+          plutil -p "$EXT/Info.plist"
+
+          echo "===== NSEXTENSION ====="
+          /usr/libexec/PlistBuddy \
+            -c "Print :NSExtension" \
+            "$EXT/Info.plist"
+
+          echo "===== EXTENSION BUNDLE ID ====="
+          /usr/libexec/PlistBuddy \
+            -c "Print :CFBundleIdentifier" \
+            "$EXT/Info.plist"
 
       - name: Package unsigned IPA
         run: |

@@ -27,7 +27,7 @@ final class MisMeeterRuntime {
     var onUnderruns: ((UInt64) -> Void)?
     var onPacketsSent: ((UInt64) -> Void)?
     var onPrimedChange: ((Bool) -> Void)?
-    var onAdaptiveStats: ((Double, Double) -> Void)?
+    var onPLLStats: ((Double, Double, Double, Double, UInt64) -> Void)?
 
     private init() {
         let tx = VBANTransmitter()
@@ -61,8 +61,8 @@ final class MisMeeterRuntime {
         transmitter.onPrimedChange = { [weak self] value in
             self?.onPrimedChange?(value)
         }
-        transmitter.onAdaptiveStats = { [weak self] latencyMS, ppm in
-            self?.onAdaptiveStats?(latencyMS, ppm)
+        transmitter.onPLLStats = { [weak self] targetMS, captureHz, txHz, lateMS, catchUps in
+            self?.onPLLStats?(targetMS, captureHz, txHz, lateMS, catchUps)
         }
     }
 

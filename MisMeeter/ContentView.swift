@@ -20,7 +20,7 @@ struct ContentView: View {
     @AppStorage("p3Stream") private var p3Stream = "MisMeeter3"
 
     @AppStorage("microphoneGainDB") private var gainDB = 12.0
-    @AppStorage("transmissionModeV07") private var transmissionModeRaw = VBANTransmissionMode.automatic.rawValue
+    @AppStorage("transmissionModeV08") private var transmissionModeRaw = VBANTransmissionMode.automatic.rawValue
 
     @State private var isStreaming = MisMeeterRuntime.shared.isStreaming
     @State private var isMuted = MisMeeterRuntime.shared.isMuted
@@ -32,8 +32,11 @@ struct ContentView: View {
     @State private var actualIOBufferMS = 0.0
     @State private var underruns: UInt64 = 0
     @State private var senderPrimed = false
-    @State private var adaptiveLatencyMS = 300.0
-    @State private var clockCorrectionPPM = 0.0
+    @State private var adaptiveLatencyMS = 150.0
+    @State private var measuredCaptureHz = 48000.0
+    @State private var effectiveTXHz = 48000.0
+    @State private var schedulerLateMS = 0.0
+    @State private var catchUpPackets: UInt64 = 0
 
     var body: some View {
         NavigationStack {
@@ -166,7 +169,10 @@ struct ContentView: View {
                         )
                         LabeledContent("Sender primed", value: senderPrimed ? "Yes" : "No")
                         LabeledContent("Adaptive target", value: String(format: "%.0f ms", adaptiveLatencyMS))
-                        LabeledContent("Clock correction", value: String(format: "%+.0f ppm", clockCorrectionPPM))
+                        LabeledContent("Capture rate", value: String(format: "%.1f Hz", measuredCaptureHz))
+                        LabeledContent("TX rate", value: String(format: "%.1f Hz", effectiveTXHz))
+                        LabeledContent("Scheduler late", value: String(format: "%.2f ms", schedulerLateMS))
+                        LabeledContent("Catch-up packets", value: "\(catchUpPackets)")
                         LabeledContent("Underruns", value: "\(underruns)")
                         LabeledContent("Packets sent", value: "\(packetsSent)")
                     }
@@ -174,8 +180,8 @@ struct ContentView: View {
 
                 Section {
                     Text(
-                        "v0.7 Auto starts safe and lowers the target buffer while the stream remains stable. " +
-                        "An absolute monotonic scheduler plus ppm-level clock steering keeps VBAN delivery smooth."
+                        "v0.8 measures the real capture clock, locks TX rate to it, and preserves packet phase when iOS wakes the sender late. " +
+                        "Small catch-up bursts remove accumulated latency instead of letting the FIFO grow forever."
                     )
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -331,10 +337,13 @@ struct ContentView: View {
         MisMeeterRuntime.shared.onPrimedChange = { value in
             DispatchQueue.main.async { senderPrimed = value }
         }
-        MisMeeterRuntime.shared.onAdaptiveStats = { latencyMS, ppm in
+        MisMeeterRuntime.shared.onPLLStats = { targetMS, captureHz, txHz, lateMS, catchUps in
             DispatchQueue.main.async {
-                adaptiveLatencyMS = latencyMS
-                clockCorrectionPPM = ppm
+                adaptiveLatencyMS = targetMS
+                measuredCaptureHz = captureHz
+                effectiveTXHz = txHz
+                schedulerLateMS = lateMS
+                catchUpPackets = catchUps
             }
         }
     }
@@ -392,7 +401,10 @@ struct ContentView: View {
             underruns = 0
             senderPrimed = false
             adaptiveLatencyMS = 0
-            clockCorrectionPPM = 0
+            measuredCaptureHz = 48000
+            effectiveTXHz = 48000
+            schedulerLateMS = 0
+            catchUpPackets = 0
             status = "Stopped"
         }
     }

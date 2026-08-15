@@ -20,7 +20,7 @@ struct ContentView: View {
     @AppStorage("p3Stream") private var p3Stream = "MisMeeter3"
 
     @AppStorage("microphoneGainDB") private var gainDB = 12.0
-    @AppStorage("transmissionMode") private var transmissionModeRaw = VBANTransmissionMode.balanced.rawValue
+    @AppStorage("transmissionModeV07") private var transmissionModeRaw = VBANTransmissionMode.automatic.rawValue
 
     @State private var isStreaming = MisMeeterRuntime.shared.isStreaming
     @State private var isMuted = MisMeeterRuntime.shared.isMuted
@@ -32,6 +32,8 @@ struct ContentView: View {
     @State private var actualIOBufferMS = 0.0
     @State private var underruns: UInt64 = 0
     @State private var senderPrimed = false
+    @State private var adaptiveLatencyMS = 300.0
+    @State private var clockCorrectionPPM = 0.0
 
     var body: some View {
         NavigationStack {
@@ -163,6 +165,8 @@ struct ContentView: View {
                             value: String(format: "%.2f ms", actualIOBufferMS)
                         )
                         LabeledContent("Sender primed", value: senderPrimed ? "Yes" : "No")
+                        LabeledContent("Adaptive target", value: String(format: "%.0f ms", adaptiveLatencyMS))
+                        LabeledContent("Clock correction", value: String(format: "%+.0f ppm", clockCorrectionPPM))
                         LabeledContent("Underruns", value: "\(underruns)")
                         LabeledContent("Packets sent", value: "\(packetsSent)")
                     }
@@ -170,9 +174,8 @@ struct ContentView: View {
 
                 Section {
                     Text(
-                        "v0.6 prebuffers the large iOS microphone callbacks and emits one 256-sample VBAN " +
-                        "packet every ~5.33 ms. A tiny adaptive clock correction keeps the FIFO centered " +
-                        "without exposing VoiceMeeter to 100 ms packet bursts."
+                        "v0.7 Auto starts safe and lowers the target buffer while the stream remains stable. " +
+                        "An absolute monotonic scheduler plus ppm-level clock steering keeps VBAN delivery smooth."
                     )
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -326,8 +329,12 @@ struct ContentView: View {
         }
 
         MisMeeterRuntime.shared.onPrimedChange = { value in
+            DispatchQueue.main.async { senderPrimed = value }
+        }
+        MisMeeterRuntime.shared.onAdaptiveStats = { latencyMS, ppm in
             DispatchQueue.main.async {
-                senderPrimed = value
+                adaptiveLatencyMS = latencyMS
+                clockCorrectionPPM = ppm
             }
         }
     }
@@ -384,6 +391,8 @@ struct ContentView: View {
             actualIOBufferMS = 0
             underruns = 0
             senderPrimed = false
+            adaptiveLatencyMS = 0
+            clockCorrectionPPM = 0
             status = "Stopped"
         }
     }

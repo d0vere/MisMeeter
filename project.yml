@@ -12,6 +12,7 @@ settings:
     TARGETED_DEVICE_FAMILY: "1"
 
 targets:
+
   MisMeeter:
     type: application
     platform: iOS
@@ -24,15 +25,19 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.mismeeter.app
         PRODUCT_NAME: MisMeeter
+
         GENERATE_INFOPLIST_FILE: YES
+
         INFOPLIST_KEY_CFBundleDisplayName: MisMeeter
         INFOPLIST_KEY_NSSupportsLiveActivities: YES
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
+
         TARGETED_DEVICE_FAMILY: "1"
 
     dependencies:
       - target: MisMeeterWidget
         embed: true
+
 
   MisMeeterWidget:
     type: app-extension
@@ -44,6 +49,7 @@ targets:
 
     info:
       path: MisMeeterWidget/Generated-Info.plist
+
       properties:
         CFBundleDisplayName: MisMeeter Live Activity
         CFBundleExecutable: $(EXECUTABLE_NAME)
@@ -51,8 +57,9 @@ targets:
         CFBundleInfoDictionaryVersion: "6.0"
         CFBundleName: $(PRODUCT_NAME)
         CFBundlePackageType: XPC!
-        CFBundleShortVersionString: "0.1"
-        CFBundleVersion: "1"
+        CFBundleShortVersionString: "0.2"
+        CFBundleVersion: "2"
+
         NSExtension:
           NSExtensionPointIdentifier: com.apple.widgetkit-extension
 
@@ -60,6 +67,8 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.mismeeter.app.widget
         PRODUCT_NAME: MisMeeterWidget
+
         GENERATE_INFOPLIST_FILE: NO
         SKIP_INSTALL: YES
+
         TARGETED_DEVICE_FAMILY: "1"

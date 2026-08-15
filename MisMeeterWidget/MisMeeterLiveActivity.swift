@@ -2,79 +2,308 @@ import ActivityKit
 import WidgetKit
 import SwiftUI
 
+
 struct MisMeeterLiveActivity: Widget {
+
     var body: some WidgetConfiguration {
-        ActivityConfiguration(for: MicActivityAttributes.self) { context in
+
+        ActivityConfiguration(
+            for: MicActivityAttributes.self
+        ) { context in
+
             lockScreenView(context)
-                .activityBackgroundTint(.black.opacity(0.88))
-                .activitySystemActionForegroundColor(.white)
+
+                .activityBackgroundTint(
+                    context.state.isMuted
+                        ? Color.red.opacity(0.75)
+                        : Color.green.opacity(0.75)
+                )
+
+                .activitySystemActionForegroundColor(
+                    .white
+                )
+
         } dynamicIsland: { context in
+
             DynamicIsland {
-                DynamicIslandExpandedRegion(.leading) {
-                    Label(
-                        context.state.isMuted ? "Muted" : "Live",
-                        systemImage: context.state.isMuted ? "mic.slash.fill" : "mic.fill"
+
+                /*
+                 EXPANDED - LEADING
+                 */
+
+                DynamicIslandExpandedRegion(
+                    .leading
+                ) {
+
+                    HStack {
+
+                        Image(
+                            systemName:
+                                context.state.isMuted
+                                ? "mic.slash.fill"
+                                : "mic.fill"
+                        )
+
+                        Text(
+                            context.state.isMuted
+                                ? "MUTED"
+                                : "LIVE"
+                        )
+                        .font(.headline)
+                    }
+                }
+
+
+                /*
+                 EXPANDED - TRAILING
+                 */
+
+                DynamicIslandExpandedRegion(
+                    .trailing
+                ) {
+
+                    Text(
+                        context.state.connectionLabel
                     )
+
+                    .font(.caption)
+
+                    .foregroundStyle(
+                        .secondary
+                    )
+                }
+
+
+                /*
+                 EXPANDED - BOTTOM
+                 */
+
+                DynamicIslandExpandedRegion(
+                    .bottom
+                ) {
+
+                    VStack(spacing: 8) {
+
+                        Text(
+                            context.state.isMuted
+                                ? "Microphone is muted"
+                                : "Microphone is active"
+                        )
+
+                        .font(.caption)
+
+
+                        Button(
+                            intent: ToggleMuteIntent()
+                        ) {
+
+                            Label(
+
+                                context.state.isMuted
+                                    ? "UNMUTE"
+                                    : "MUTE",
+
+                                systemImage:
+                                    context.state.isMuted
+                                    ? "mic.fill"
+                                    : "mic.slash.fill"
+                            )
+
+                            .font(.headline)
+
+                            .frame(
+                                maxWidth: .infinity
+                            )
+
+                            .padding(.vertical, 4)
+                        }
+
+                        .buttonStyle(
+                            .borderedProminent
+                        )
+                    }
+                }
+
+            }
+
+
+            /*
+             DYNAMIC ISLAND COMPACT LEADING
+
+             Esperimento:
+             proviamo un vero Button/AppIntent
+             direttamente nella compact region.
+             */
+
+            compactLeading: {
+
+                Button(
+                    intent: ToggleMuteIntent()
+                ) {
+
+                    Image(
+                        systemName:
+                            context.state.isMuted
+                            ? "mic.slash.fill"
+                            : "mic.fill"
+                    )
+
                     .font(.headline)
                 }
 
-                DynamicIslandExpandedRegion(.trailing) {
-                    Text(context.state.connectionLabel)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-
-                DynamicIslandExpandedRegion(.bottom) {
-                    Button(intent: ToggleMuteIntent()) {
-                        Label(
-                            context.state.isMuted ? "Unmute" : "Mute",
-                            systemImage: context.state.isMuted ? "mic.fill" : "mic.slash.fill"
-                        )
-                        .frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(.borderedProminent)
-                }
-            } compactLeading: {
-                Image(systemName: context.state.isMuted ? "mic.slash.fill" : "mic.fill")
-            } compactTrailing: {
-                Text(context.state.isMuted ? "OFF" : "ON")
-                    .font(.caption2.bold())
-            } minimal: {
-                Image(systemName: context.state.isMuted ? "mic.slash.fill" : "mic.fill")
+                .buttonStyle(.plain)
             }
-            .widgetURL(URL(string: "mismeeter://activity"))
-            .keylineTint(context.state.isMuted ? .orange : .green)
+
+
+            /*
+             COMPACT TRAILING
+             */
+
+            compactTrailing: {
+
+                Text(
+                    context.state.isMuted
+                        ? "OFF"
+                        : "ON"
+                )
+
+                .font(.caption2.bold())
+            }
+
+
+            /*
+             MINIMAL
+             */
+
+            minimal: {
+
+                Image(
+                    systemName:
+                        context.state.isMuted
+                        ? "mic.slash.fill"
+                        : "mic.fill"
+                )
+            }
+
+
+            .keylineTint(
+                context.state.isMuted
+                    ? .red
+                    : .green
+            )
         }
     }
 
+
+    /*
+     LOCK SCREEN
+     */
+
     @ViewBuilder
-    private func lockScreenView(_ context: ActivityViewContext<MicActivityAttributes>) -> some View {
-        HStack(spacing: 16) {
-            Image(systemName: context.state.isMuted ? "mic.slash.circle.fill" : "mic.circle.fill")
-                .font(.system(size: 36))
+    private func lockScreenView(
+        _ context:
+            ActivityViewContext<
+                MicActivityAttributes
+            >
+    ) -> some View {
 
-            VStack(alignment: .leading, spacing: 4) {
-                Text("MisMeeter")
-                    .font(.headline)
+        VStack(spacing: 14) {
 
-                Text(context.state.isMuted ? "MICROPHONE MUTED" : "MICROPHONE ACTIVE")
-                    .font(.subheadline.bold())
+            HStack(spacing: 14) {
 
-                Text(context.attributes.sessionName + " • " + context.state.connectionLabel)
+                Image(
+                    systemName:
+                        context.state.isMuted
+                        ? "mic.slash.circle.fill"
+                        : "mic.circle.fill"
+                )
+
+                .font(
+                    .system(size: 38)
+                )
+
+
+                VStack(
+                    alignment: .leading,
+                    spacing: 3
+                ) {
+
+                    Text("MisMeeter")
+
+                        .font(
+                            .headline
+                        )
+
+
+                    Text(
+                        context.state.isMuted
+                            ? "MICROPHONE MUTED"
+                            : "MICROPHONE ACTIVE"
+                    )
+
+                    .font(
+                        .subheadline.bold()
+                    )
+
+
+                    Text(
+                        context.attributes.sessionName
+                        +
+                        " • "
+                        +
+                        context.state.connectionLabel
+                    )
+
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+
+                    .foregroundStyle(
+                        .secondary
+                    )
+                }
+
+
+                Spacer()
             }
 
-            Spacer()
 
-            Button(intent: ToggleMuteIntent()) {
-                Image(systemName: context.state.isMuted ? "mic.fill" : "mic.slash.fill")
-                    .font(.title3)
-                    .padding(6)
+            Button(
+                intent: ToggleMuteIntent()
+            ) {
+
+                HStack {
+
+                    Image(
+                        systemName:
+                            context.state.isMuted
+                            ? "mic.fill"
+                            : "mic.slash.fill"
+                    )
+
+
+                    Text(
+                        context.state.isMuted
+                            ? "UNMUTE MICROPHONE"
+                            : "MUTE MICROPHONE"
+                    )
+                }
+
+                .font(.headline)
+
+                .frame(
+                    maxWidth: .infinity
+                )
+
+                .padding(
+                    .vertical,
+                    5
+                )
             }
-            .buttonStyle(.borderedProminent)
-            .accessibilityLabel(context.state.isMuted ? "Unmute" : "Mute")
+
+            .buttonStyle(
+                .borderedProminent
+            )
         }
+
         .padding()
     }
 }

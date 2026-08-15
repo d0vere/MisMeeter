@@ -1,74 +1,54 @@
-# MisMeeter v0.4
+# MisMeeter v0.5
 
-iPhone microphone -> VBAN -> VoiceMeeter, with no Windows client.
+iPhone microphone -> VBAN -> VoiceMeeter, without a Windows client.
 
-## v0.4 changes
+## v0.5 audio fix
 
-- 3 independent VBAN presets
-- smoother VBAN packet pacing
-- fixed 256-sample packet cadence at 48 kHz
-- software microphone gain control
-- default microphone gain: +12 dB
-- switched away from AVAudioSession `.measurement` mode
-- peak meter
-- mute keeps sending silence so VoiceMeeter's stream remains alive
-- Live Activity / Dynamic Island controls retained
+v0.4 used a second software clock: a DispatchSourceTimer sent one VBAN packet every ~5.33 ms.
+That improved packet spacing but it could slowly drift against the real iPhone audio clock and
+periodically produce underruns / short silence packets.
+
+v0.5 removes that clock entirely.
+
+The microphone sample stream is now the only master clock:
+
+AVAudioEngine -> PCM FIFO -> every complete 256 samples -> VBAN UDP
+
+If iOS produces 512 or 1024 frames in one callback, MisMeeter sends 2 or 4 consecutive VBAN
+packets. This is valid and expected by VBAN receivers such as VoiceMeeter.
+
+Additional changes:
+
+- UDP connection uses Network.framework `interactiveVoice` service class
+- keeps the 0...+24 dB software gain slider
+- keeps all 3 independent presets
+- requests a 256-sample-like I/O duration, then displays the *actual* duration chosen by iOS
+- displays callback frame count and packets sent for diagnostics
+- mute remains immediate and sends zero PCM while muted
+
+## VoiceMeeter recommendation
+
+If Wi-Fi still causes intermittent artifacts, increase the VBAN IN **Network Quality** setting
+one step (for example Fast -> Medium). That increases receive buffering/latency but improves
+tolerance to Wi-Fi jitter.
 
 ## VBAN format
 
-- 48,000 Hz
-- PCM signed Int16
-- Mono
-- 256 samples per packet
+- 48 kHz
+- signed PCM16
+- mono
+- 256 samples per VBAN frame
 - UDP
 - default port 6980
 
-At 48 kHz, 256 samples represent about 5.333 ms of audio. MisMeeter v0.4 uses a paced sender instead of sending packets in bursts whenever the audio callback happens.
-
 ## Presets
 
-Each preset stores:
+Preset 1, Preset 2, and Preset 3 independently store:
 
-- display name
-- Windows PC IPv4 / hostname
+- preset name
+- PC IPv4 / hostname
 - UDP port
 - VBAN stream name
-
-Select Preset 1, 2, or 3 before starting.
-
-Example:
-
-Preset 1
-- Name: Desktop
-- Host: 192.168.1.50
-- Port: 6980
-- Stream: MisMeeter
-
-Preset 2
-- Name: Gaming
-- Host: 192.168.1.50
-- Port: 6980
-- Stream: MicGame
-
-Preset 3
-- Name: Laptop
-- Host: 192.168.1.80
-- Port: 6980
-- Stream: iPhoneMic
-
-## VoiceMeeter
-
-Open VoiceMeeter -> VBAN and enable a VBAN IN stream whose Stream Name matches the selected MisMeeter preset.
-
-If you use multiple presets on the same PC, configure multiple VBAN IN rows with the corresponding stream names.
-
-Windows Firewall must allow UDP traffic to VoiceMeeter on the configured port.
-
-## Microphone gain
-
-The default software gain is +12 dB. You can change it from 0 to +24 dB.
-
-If the signal clips, lower the gain.
 
 ## Build
 

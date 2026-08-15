@@ -26,6 +26,9 @@ struct ContentView: View {
     @State private var status = "Ready"
     @State private var meter: Float = 0
     @State private var bufferSamples = 0
+    @State private var packetsSent: UInt64 = 0
+    @State private var callbackFrames = 0
+    @State private var actualIOBufferMS = 0.0
 
     var body: some View {
         NavigationStack {
@@ -121,15 +124,22 @@ struct ContentView: View {
                         LabeledContent("Destination", value: preset.destinationLabel)
                         LabeledContent("Format", value: "48 kHz • PCM16 • Mono")
                         LabeledContent("Packet", value: "256 samples • 5.33 ms")
-                        LabeledContent("FIFO", value: "\(bufferSamples) samples")
+                        LabeledContent("FIFO remainder", value: "\(bufferSamples) samples")
+                        LabeledContent("Input callback", value: "\(callbackFrames) frames")
+                        LabeledContent(
+                            "Actual I/O buffer",
+                            value: String(format: "%.2f ms", actualIOBufferMS)
+                        )
+                        LabeledContent("Packets sent", value: "\(packetsSent)")
                     }
                 }
 
                 Section {
                     Text(
-                        "v0.4 decouples AVAudioEngine callbacks from VBAN packet timing. " +
-                        "Packets are paced at one 256-sample frame every ~5.33 ms. " +
-                        "While muted, MisMeeter keeps the VBAN stream alive by sending silence."
+                        "v0.5 derives VBAN timing directly from the microphone sample clock. " +
+                        "If iOS produces 512/1024-frame buffers, MisMeeter sends the corresponding " +
+                        "2/4 VBAN packets as a short burst, which is normal VBAN behaviour. " +
+                        "No independent 5.33 ms software timer is used."
                     )
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -262,6 +272,19 @@ struct ContentView: View {
                 bufferSamples = value
             }
         }
+
+        MisMeeterRuntime.shared.onPacketsSent = { value in
+            DispatchQueue.main.async {
+                packetsSent = value
+            }
+        }
+
+        MisMeeterRuntime.shared.onAudioDiagnostics = { frames, duration in
+            DispatchQueue.main.async {
+                callbackFrames = frames
+                actualIOBufferMS = duration * 1000
+            }
+        }
     }
 
     private func startStreaming() async {
@@ -306,6 +329,9 @@ struct ContentView: View {
             isMuted = MisMeeterRuntime.shared.isMuted
             meter = 0
             bufferSamples = 0
+            packetsSent = 0
+            callbackFrames = 0
+            actualIOBufferMS = 0
             status = "Stopped"
         }
     }

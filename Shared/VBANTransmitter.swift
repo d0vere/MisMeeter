@@ -8,11 +8,11 @@ final class VBANTransmitter {
     )
 
     private var connection: NWConnection?
-    private var pacingTimer: DispatchSourceTimer?
     private let fifo = SampleFIFO()
 
     private var frameCounter: UInt32 = 0
     private var muted = false
+    private var packetsSent: UInt64 = 0
 
     private(set) var preset = VBANPreset(
         name: "Preset 1",
@@ -23,6 +23,7 @@ final class VBANTransmitter {
 
     var onStateChange: ((String) -> Void)?
     var onBufferLevel: ((Int) -> Void)?
+    var onPacketsSent: ((UInt64) -> Void)?
 
     func configure(preset: VBANPreset) {
         queue.sync {
@@ -34,7 +35,8 @@ final class VBANTransmitter {
         queue.async {
             self.stopLocked()
 
-            let host = self.preset.host.trimmingCharacters(in: .whitespacesAndNewlines)
+            let host = self.preset.host
+                .trimmingCharacters(in: .whitespacesAndNewlines)
 
             guard !host.isEmpty,
                   let nwPort = NWEndpoint.Port(rawValue: self.preset.port) else {
@@ -42,10 +44,15 @@ final class VBANTransmitter {
                 return
             }
 
+            // VBAN is real-time UDP audio. interactiveVoice gives the system
+            // the correct scheduling / QoS hint for a low-delay constant-rate flow.
+            let parameters = NWParameters.udp
+            parameters.serviceClass = .interactiveVoice
+
             let connection = NWConnection(
                 host: NWEndpoint.Host(host),
                 port: nwPort,
-                using: .udp
+                using: parameters
             )
 
             connection.stateUpdateHandler = { [weak self] state in
@@ -54,7 +61,6 @@ final class VBANTransmitter {
                 switch state {
                 case .ready:
                     self.onStateChange?("VBAN ready")
-                    self.startPacingTimer()
                 case .preparing:
                     self.onStateChange?("Connecting…")
                 case .waiting(let error):
@@ -70,7 +76,9 @@ final class VBANTransmitter {
 
             self.connection = connection
             self.frameCounter = 0
+            self.packetsSent = 0
             self.fifo.clear()
+
             connection.start(queue: self.queue)
         }
     }
@@ -87,71 +95,52 @@ final class VBANTransmitter {
         }
     }
 
-    /// Audio callbacks only append samples.
-    /// UDP packet timing is deliberately decoupled from AVAudioEngine callback timing.
+    /// v0.5 deliberately does NOT pace packets using a separate software timer.
+    ///
+    /// VBAN defines the sender as the audio clock master. We therefore derive
+    /// network timing directly from the microphone sample stream. If iOS gives
+    /// us 512/1024 frames at once, sending 2/4 x 256-sample packets as a short
+    /// burst is valid VBAN behaviour and is explicitly expected by receivers
+    /// such as VoiceMeeter.
     func enqueue(_ samples: [Int16]) {
         guard !samples.isEmpty else { return }
 
         queue.async {
+            guard self.connection != nil else { return }
+
             self.fifo.append(samples)
 
-            // Prevent runaway latency if the app/network gets stalled.
-            let maxBufferedSamples = VBANPacket.samplesPerPacket * 12
-            while self.fifo.count > maxBufferedSamples {
-                _ = self.fifo.pop(VBANPacket.samplesPerPacket)
+            // Drain every complete VBAN frame immediately.
+            while let block = self.fifo.pop(VBANPacket.samplesPerPacket) {
+                self.send(block)
             }
 
             self.onBufferLevel?(self.fifo.count)
         }
     }
 
-    private func startPacingTimer() {
-        pacingTimer?.cancel()
-
-        let timer = DispatchSource.makeTimerSource(queue: queue)
-
-        let nanoseconds = Int(
-            VBANPacket.packetDurationSeconds * 1_000_000_000
-        )
-
-        timer.schedule(
-            deadline: .now(),
-            repeating: .nanoseconds(nanoseconds),
-            leeway: .microseconds(250)
-        )
-
-        timer.setEventHandler { [weak self] in
-            self?.sendNextPacket()
-        }
-
-        pacingTimer = timer
-        timer.resume()
-    }
-
-    private func sendNextPacket() {
+    private func send(_ microphoneSamples: [Int16]) {
         guard let connection else { return }
 
-        let samples: [Int16]
+        let outgoing: [Int16]
 
         if muted {
-            // Consume buffered audio while muted so unmute resumes "now",
-            // not from stale audio accumulated seconds earlier.
-            _ = fifo.pop(min(fifo.count, VBANPacket.samplesPerPacket))
-            samples = [Int16](repeating: 0, count: VBANPacket.samplesPerPacket)
-        } else if let block = fifo.pop(VBANPacket.samplesPerPacket) {
-            samples = block
+            outgoing = [Int16](
+                repeating: 0,
+                count: VBANPacket.samplesPerPacket
+            )
         } else {
-            // Underrun: keep VBAN clock continuous instead of producing a network gap.
-            samples = [Int16](repeating: 0, count: VBANPacket.samplesPerPacket)
+            outgoing = microphoneSamples
         }
 
         let packet = VBANPacket.make(
-            samples: samples,
+            samples: outgoing,
             streamName: preset.sanitizedStreamName,
             frameCounter: frameCounter
         )
 
         frameCounter &+= 1
+        packetsSent &+= 1
 
         connection.send(
             content: packet,
@@ -164,19 +153,16 @@ final class VBANTransmitter {
             }
         )
 
-        onBufferLevel?(fifo.count)
+        onPacketsSent?(packetsSent)
     }
 
     private func stopLocked() {
-        pacingTimer?.setEventHandler {}
-        pacingTimer?.cancel()
-        pacingTimer = nil
-
         connection?.stateUpdateHandler = nil
         connection?.cancel()
         connection = nil
 
         fifo.clear()
         frameCounter = 0
+        packetsSent = 0
     }
 }

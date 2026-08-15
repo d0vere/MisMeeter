@@ -23,6 +23,7 @@ final class MicrophoneEngine {
     private var _gainDB: Float = 12
 
     var onMeter: ((Float) -> Void)?
+    var onAudioDiagnostics: ((Int, Double) -> Void)?
 
     init(transmitter: VBANTransmitter) {
         self.transmitter = transmitter
@@ -44,17 +45,15 @@ final class MicrophoneEngine {
     func start() throws {
         let session = AVAudioSession.sharedInstance()
 
-        // `.measurement` intentionally minimizes processing and can sound
-        // surprisingly quiet for speech. v0.4 uses the normal recording mode.
         try session.setCategory(
             .record,
             mode: .default,
             options: []
         )
 
+        // Preferences must be requested before activation. They are hints:
+        // after activation we inspect the actual values chosen by iOS.
         try session.setPreferredSampleRate(VBANPacket.sampleRate)
-
-        // Match VBAN packet duration as closely as the hardware permits.
         try session.setPreferredIOBufferDuration(
             VBANPacket.packetDurationSeconds
         )
@@ -65,21 +64,34 @@ final class MicrophoneEngine {
             throw MicrophoneEngineError.noInput
         }
 
+        let actualRate = session.sampleRate
+        let actualDuration = session.ioBufferDuration
+
+        guard abs(actualRate - VBANPacket.sampleRate) < 1 else {
+            throw MicrophoneEngineError.unsupportedSampleRate(actualRate)
+        }
+
+        print(
+            "MISMEETER: actual audio session: \(actualRate) Hz, " +
+            "\(actualDuration * 1000) ms I/O buffer"
+        )
+
         let input = engine.inputNode
         let format = input.outputFormat(forBus: 0)
 
-        guard abs(format.sampleRate - VBANPacket.sampleRate) < 1 else {
-            throw MicrophoneEngineError.unsupportedSampleRate(format.sampleRate)
-        }
-
         input.removeTap(onBus: 0)
 
+        // 256 is a request, not a guarantee. If iOS hands us 512/1024 samples,
+        // VBANTransmitter splits them into consecutive 256-sample packets.
         input.installTap(
             onBus: 0,
-            bufferSize: 1024,
+            bufferSize: AVAudioFrameCount(VBANPacket.samplesPerPacket),
             format: format
         ) { [weak self] buffer, _ in
-            self?.process(buffer)
+            self?.process(
+                buffer,
+                actualIOBufferDuration: actualDuration
+            )
         }
 
         engine.prepare()
@@ -100,7 +112,10 @@ final class MicrophoneEngine {
         }
     }
 
-    private func process(_ buffer: AVAudioPCMBuffer) {
+    private func process(
+        _ buffer: AVAudioPCMBuffer,
+        actualIOBufferDuration: Double
+    ) {
         let frameCount = Int(buffer.frameLength)
         guard frameCount > 0 else { return }
 
@@ -121,11 +136,7 @@ final class MicrophoneEngine {
                 let raw = channel[index]
                 peak = max(peak, abs(raw))
 
-                let amplified = raw * linearGain
-
-                // Soft saturation instead of a hard digital cliff.
-                // For small signals this is effectively just gain.
-                let limited = tanhf(amplified)
+                let limited = tanhf(raw * linearGain)
 
                 output.append(
                     Int16(
@@ -158,6 +169,10 @@ final class MicrophoneEngine {
         }
 
         onMeter?(min(1, peak * linearGain))
+        onAudioDiagnostics?(frameCount, actualIOBufferDuration)
+
+        // No network work on the real-time audio callback:
+        // enqueue() switches immediately onto the transmitter's serial queue.
         transmitter.enqueue(output)
     }
 }

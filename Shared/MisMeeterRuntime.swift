@@ -23,6 +23,8 @@ final class MisMeeterRuntime {
     var onStatusChange: ((String) -> Void)?
     var onMeter: ((Float) -> Void)?
     var onBufferLevel: ((Int) -> Void)?
+    var onPacketsSent: ((UInt64) -> Void)?
+    var onAudioDiagnostics: ((Int, Double) -> Void)?
 
     private init() {
         let tx = VBANTransmitter()
@@ -33,12 +35,20 @@ final class MisMeeterRuntime {
             self?.onMeter?(value)
         }
 
+        microphone.onAudioDiagnostics = { [weak self] frames, duration in
+            self?.onAudioDiagnostics?(frames, duration)
+        }
+
         transmitter.onStateChange = { [weak self] value in
             self?.onStatusChange?(value)
         }
 
         transmitter.onBufferLevel = { [weak self] count in
             self?.onBufferLevel?(count)
+        }
+
+        transmitter.onPacketsSent = { [weak self] count in
+            self?.onPacketsSent?(count)
         }
     }
 
@@ -106,7 +116,6 @@ final class MisMeeterRuntime {
             return _isMuted
         }
 
-        // Real stream mute happens immediately, independent of ActivityKit redraw.
         transmitter.setMuted(value)
         return value
     }

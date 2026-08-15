@@ -12,44 +12,50 @@ settings:
     TARGETED_DEVICE_FAMILY: "1"
 
 targets:
-
   MisMeeter:
     type: application
     platform: iOS
-
     sources:
       - path: Shared
       - path: MisMeeter
-
+    info:
+      path: MisMeeter/Generated-Info.plist
+      properties:
+        CFBundleDisplayName: MisMeeter
+        CFBundleExecutable: $(EXECUTABLE_NAME)
+        CFBundleIdentifier: $(PRODUCT_BUNDLE_IDENTIFIER)
+        CFBundleInfoDictionaryVersion: "6.0"
+        CFBundleName: $(PRODUCT_NAME)
+        CFBundlePackageType: APPL
+        CFBundleShortVersionString: "0.3"
+        CFBundleVersion: "3"
+        LSRequiresIPhoneOS: true
+        NSSupportsLiveActivities: true
+        NSMicrophoneUsageDescription: "MisMeeter uses the iPhone microphone to transmit audio to VoiceMeeter over VBAN."
+        NSLocalNetworkUsageDescription: "MisMeeter sends microphone audio to your VoiceMeeter PC over the local network."
+        UIBackgroundModes:
+          - audio
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.mismeeter.app
         PRODUCT_NAME: MisMeeter
-
-        GENERATE_INFOPLIST_FILE: YES
-
-        INFOPLIST_KEY_CFBundleDisplayName: MisMeeter
-        INFOPLIST_KEY_NSSupportsLiveActivities: YES
-        INFOPLIST_KEY_UILaunchScreen_Generation: YES
-
+        GENERATE_INFOPLIST_FILE: NO
         TARGETED_DEVICE_FAMILY: "1"
-
     dependencies:
       - target: MisMeeterWidget
         embed: true
 
-
   MisMeeterWidget:
     type: app-extension
     platform: iOS
-
     sources:
       - path: Shared
       - path: MisMeeterWidget
-
     info:
       path: MisMeeterWidget/Generated-Info.plist
-
       properties:
         CFBundleDisplayName: MisMeeter Live Activity
         CFBundleExecutable: $(EXECUTABLE_NAME)
@@ -57,18 +63,14 @@ targets:
         CFBundleInfoDictionaryVersion: "6.0"
         CFBundleName: $(PRODUCT_NAME)
         CFBundlePackageType: XPC!
-        CFBundleShortVersionString: "0.2"
-        CFBundleVersion: "2"
-
+        CFBundleShortVersionString: "0.3"
+        CFBundleVersion: "3"
         NSExtension:
           NSExtensionPointIdentifier: com.apple.widgetkit-extension
-
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.mismeeter.app.widget
         PRODUCT_NAME: MisMeeterWidget
-
         GENERATE_INFOPLIST_FILE: NO
         SKIP_INSTALL: YES
-
         TARGETED_DEVICE_FAMILY: "1"

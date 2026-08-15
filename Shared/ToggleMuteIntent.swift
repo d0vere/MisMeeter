@@ -7,10 +7,12 @@ struct ToggleMuteIntent: LiveActivityIntent {
     static var openAppWhenRun: Bool = false
 
     func perform() async throws -> some IntentResult {
-        let newMuted = MisMeeterRuntime.shared.toggleMuted()
-        print("MISMEETER: LiveActivityIntent -> muted=\(newMuted)")
+        let value = MisMeeterRuntime.shared.toggleMuted()
+
+        print("MISMEETER: LiveActivityIntent muted=\(value)")
 
         await MisMeeterRuntime.shared.syncLiveActivity()
+
         return .result()
     }
 }

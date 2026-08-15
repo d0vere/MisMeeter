@@ -10,7 +10,7 @@ enum MicrophoneEngineError: LocalizedError {
         case .noInput:
             return "No microphone input is available."
         case .unsupportedSampleRate(let rate):
-            return "Active mic sample rate is \(Int(rate)) Hz; MisMeeter v0.3 requires 48000 Hz."
+            return "The microphone is running at \(Int(rate)) Hz. MisMeeter currently requires 48000 Hz."
         }
     }
 }
@@ -19,19 +19,46 @@ final class MicrophoneEngine {
     private let engine = AVAudioEngine()
     private let transmitter: VBANTransmitter
 
-    var isMutedProvider: () -> Bool = { false }
+    private let gainLock = NSLock()
+    private var _gainDB: Float = 12
+
     var onMeter: ((Float) -> Void)?
 
     init(transmitter: VBANTransmitter) {
         self.transmitter = transmitter
     }
 
+    var gainDB: Float {
+        get {
+            gainLock.lock()
+            defer { gainLock.unlock() }
+            return _gainDB
+        }
+        set {
+            gainLock.lock()
+            _gainDB = max(0, min(24, newValue))
+            gainLock.unlock()
+        }
+    }
+
     func start() throws {
         let session = AVAudioSession.sharedInstance()
 
-        try session.setCategory(.record, mode: .measurement, options: [])
+        // `.measurement` intentionally minimizes processing and can sound
+        // surprisingly quiet for speech. v0.4 uses the normal recording mode.
+        try session.setCategory(
+            .record,
+            mode: .default,
+            options: []
+        )
+
         try session.setPreferredSampleRate(VBANPacket.sampleRate)
-        try session.setPreferredIOBufferDuration(0.005)
+
+        // Match VBAN packet duration as closely as the hardware permits.
+        try session.setPreferredIOBufferDuration(
+            VBANPacket.packetDurationSeconds
+        )
+
         try session.setActive(true)
 
         guard session.isInputAvailable else {
@@ -41,14 +68,15 @@ final class MicrophoneEngine {
         let input = engine.inputNode
         let format = input.outputFormat(forBus: 0)
 
-        guard abs(format.sampleRate - VBANPacket.sampleRate) < 1.0 else {
+        guard abs(format.sampleRate - VBANPacket.sampleRate) < 1 else {
             throw MicrophoneEngineError.unsupportedSampleRate(format.sampleRate)
         }
 
         input.removeTap(onBus: 0)
+
         input.installTap(
             onBus: 0,
-            bufferSize: AVAudioFrameCount(VBANPacket.samplesPerPacket),
+            bufferSize: 1024,
             format: format
         ) { [weak self] buffer, _ in
             self?.process(buffer)
@@ -76,32 +104,60 @@ final class MicrophoneEngine {
         let frameCount = Int(buffer.frameLength)
         guard frameCount > 0 else { return }
 
+        let currentGainDB = gainDB
+        let linearGain = powf(10, currentGainDB / 20)
+
         var output = [Int16]()
         output.reserveCapacity(frameCount)
+
         var peak: Float = 0
 
         switch buffer.format.commonFormat {
         case .pcmFormatFloat32:
-            guard let channel = buffer.floatChannelData?[0] else { return }
-            for i in 0..<frameCount {
-                let v = max(-1.0, min(1.0, channel[i]))
-                peak = max(peak, abs(v))
-                output.append(Int16(v * Float(Int16.max)))
+            guard let channels = buffer.floatChannelData else { return }
+            let channel = channels[0]
+
+            for index in 0..<frameCount {
+                let raw = channel[index]
+                peak = max(peak, abs(raw))
+
+                let amplified = raw * linearGain
+
+                // Soft saturation instead of a hard digital cliff.
+                // For small signals this is effectively just gain.
+                let limited = tanhf(amplified)
+
+                output.append(
+                    Int16(
+                        max(-1, min(1, limited))
+                        * Float(Int16.max)
+                    )
+                )
             }
 
         case .pcmFormatInt16:
-            guard let channel = buffer.int16ChannelData?[0] else { return }
-            for i in 0..<frameCount {
-                let s = channel[i]
-                peak = max(peak, abs(Float(s) / Float(Int16.max)))
-                output.append(s)
+            guard let channels = buffer.int16ChannelData else { return }
+            let channel = channels[0]
+
+            for index in 0..<frameCount {
+                let raw = Float(channel[index]) / Float(Int16.max)
+                peak = max(peak, abs(raw))
+
+                let limited = tanhf(raw * linearGain)
+
+                output.append(
+                    Int16(
+                        max(-1, min(1, limited))
+                        * Float(Int16.max)
+                    )
+                )
             }
 
         default:
             return
         }
 
-        onMeter?(peak)
-        transmitter.enqueue(output, muted: isMutedProvider())
+        onMeter?(min(1, peak * linearGain))
+        transmitter.enqueue(output)
     }
 }

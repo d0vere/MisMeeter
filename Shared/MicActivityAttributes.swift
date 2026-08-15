@@ -6,6 +6,7 @@ struct MicActivityAttributes: ActivityAttributes {
         var isMuted: Bool
         var isStreaming: Bool
         var destinationLabel: String
+        var presetLabel: String
     }
 
     var sessionName: String

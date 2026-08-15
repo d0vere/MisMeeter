@@ -2,22 +2,31 @@ import Foundation
 import Network
 
 final class VBANTransmitter {
-    private let queue = DispatchQueue(label: "dev.mismeeter.vban.tx", qos: .userInteractive)
-    private var connection: NWConnection?
-    private var pendingSamples: [Int16] = []
-    private var frameCounter: UInt32 = 0
+    private let queue = DispatchQueue(
+        label: "dev.mismeeter.vban.tx",
+        qos: .userInteractive
+    )
 
-    private(set) var host = ""
-    private(set) var port: UInt16 = 6980
-    private(set) var streamName = "MisMeeter"
+    private var connection: NWConnection?
+    private var pacingTimer: DispatchSourceTimer?
+    private let fifo = SampleFIFO()
+
+    private var frameCounter: UInt32 = 0
+    private var muted = false
+
+    private(set) var preset = VBANPreset(
+        name: "Preset 1",
+        host: "",
+        port: 6980,
+        streamName: "MisMeeter"
+    )
 
     var onStateChange: ((String) -> Void)?
+    var onBufferLevel: ((Int) -> Void)?
 
-    func configure(host: String, port: UInt16, streamName: String) {
+    func configure(preset: VBANPreset) {
         queue.sync {
-            self.host = host.trimmingCharacters(in: .whitespacesAndNewlines)
-            self.port = port
-            self.streamName = Self.sanitize(streamName)
+            self.preset = preset
         }
     }
 
@@ -25,86 +34,149 @@ final class VBANTransmitter {
         queue.async {
             self.stopLocked()
 
-            guard !self.host.isEmpty,
-                  let nwPort = NWEndpoint.Port(rawValue: self.port) else {
-                self.onStateChange?("Invalid destination")
+            let host = self.preset.host.trimmingCharacters(in: .whitespacesAndNewlines)
+
+            guard !host.isEmpty,
+                  let nwPort = NWEndpoint.Port(rawValue: self.preset.port) else {
+                self.onStateChange?("Invalid VBAN destination")
                 return
             }
 
-            let c = NWConnection(
-                host: NWEndpoint.Host(self.host),
+            let connection = NWConnection(
+                host: NWEndpoint.Host(host),
                 port: nwPort,
                 using: .udp
             )
 
-            c.stateUpdateHandler = { [weak self] state in
+            connection.stateUpdateHandler = { [weak self] state in
+                guard let self else { return }
+
                 switch state {
-                case .ready: self?.onStateChange?("VBAN ready")
-                case .preparing: self?.onStateChange?("Connecting…")
-                case .waiting(let e): self?.onStateChange?("Waiting: \(e.localizedDescription)")
-                case .failed(let e): self?.onStateChange?("Network error: \(e.localizedDescription)")
-                case .cancelled: self?.onStateChange?("Stopped")
-                default: break
+                case .ready:
+                    self.onStateChange?("VBAN ready")
+                    self.startPacingTimer()
+                case .preparing:
+                    self.onStateChange?("Connecting…")
+                case .waiting(let error):
+                    self.onStateChange?("Waiting: \(error.localizedDescription)")
+                case .failed(let error):
+                    self.onStateChange?("Network error: \(error.localizedDescription)")
+                case .cancelled:
+                    self.onStateChange?("Stopped")
+                default:
+                    break
                 }
             }
 
-            self.connection = c
-            self.pendingSamples.removeAll(keepingCapacity: true)
+            self.connection = connection
             self.frameCounter = 0
-            c.start(queue: self.queue)
+            self.fifo.clear()
+            connection.start(queue: self.queue)
         }
     }
 
     func stop() {
-        queue.async { self.stopLocked() }
-    }
-
-    func enqueue(_ samples: [Int16], muted: Bool) {
-        guard !samples.isEmpty else { return }
-
         queue.async {
-            guard self.connection != nil else { return }
-
-            if muted {
-                self.pendingSamples.append(contentsOf: repeatElement(0, count: samples.count))
-            } else {
-                self.pendingSamples.append(contentsOf: samples)
-            }
-
-            while self.pendingSamples.count >= VBANPacket.samplesPerPacket {
-                let chunk = self.pendingSamples.prefix(VBANPacket.samplesPerPacket)
-                let packet = VBANPacket.make(
-                    samples: chunk,
-                    streamName: self.streamName,
-                    frameCounter: self.frameCounter
-                )
-
-                self.frameCounter &+= 1
-                self.pendingSamples.removeFirst(VBANPacket.samplesPerPacket)
-
-                self.connection?.send(
-                    content: packet,
-                    completion: .contentProcessed { [weak self] error in
-                        if let error {
-                            self?.onStateChange?("UDP send error: \(error.localizedDescription)")
-                        }
-                    }
-                )
-            }
+            self.stopLocked()
         }
     }
 
+    func setMuted(_ value: Bool) {
+        queue.async {
+            self.muted = value
+        }
+    }
+
+    /// Audio callbacks only append samples.
+    /// UDP packet timing is deliberately decoupled from AVAudioEngine callback timing.
+    func enqueue(_ samples: [Int16]) {
+        guard !samples.isEmpty else { return }
+
+        queue.async {
+            self.fifo.append(samples)
+
+            // Prevent runaway latency if the app/network gets stalled.
+            let maxBufferedSamples = VBANPacket.samplesPerPacket * 12
+            while self.fifo.count > maxBufferedSamples {
+                _ = self.fifo.pop(VBANPacket.samplesPerPacket)
+            }
+
+            self.onBufferLevel?(self.fifo.count)
+        }
+    }
+
+    private func startPacingTimer() {
+        pacingTimer?.cancel()
+
+        let timer = DispatchSource.makeTimerSource(queue: queue)
+
+        let nanoseconds = Int(
+            VBANPacket.packetDurationSeconds * 1_000_000_000
+        )
+
+        timer.schedule(
+            deadline: .now(),
+            repeating: .nanoseconds(nanoseconds),
+            leeway: .microseconds(250)
+        )
+
+        timer.setEventHandler { [weak self] in
+            self?.sendNextPacket()
+        }
+
+        pacingTimer = timer
+        timer.resume()
+    }
+
+    private func sendNextPacket() {
+        guard let connection else { return }
+
+        let samples: [Int16]
+
+        if muted {
+            // Consume buffered audio while muted so unmute resumes "now",
+            // not from stale audio accumulated seconds earlier.
+            _ = fifo.pop(min(fifo.count, VBANPacket.samplesPerPacket))
+            samples = [Int16](repeating: 0, count: VBANPacket.samplesPerPacket)
+        } else if let block = fifo.pop(VBANPacket.samplesPerPacket) {
+            samples = block
+        } else {
+            // Underrun: keep VBAN clock continuous instead of producing a network gap.
+            samples = [Int16](repeating: 0, count: VBANPacket.samplesPerPacket)
+        }
+
+        let packet = VBANPacket.make(
+            samples: samples,
+            streamName: preset.sanitizedStreamName,
+            frameCounter: frameCounter
+        )
+
+        frameCounter &+= 1
+
+        connection.send(
+            content: packet,
+            completion: .contentProcessed { [weak self] error in
+                if let error {
+                    self?.onStateChange?(
+                        "UDP send error: \(error.localizedDescription)"
+                    )
+                }
+            }
+        )
+
+        onBufferLevel?(fifo.count)
+    }
+
     private func stopLocked() {
+        pacingTimer?.setEventHandler {}
+        pacingTimer?.cancel()
+        pacingTimer = nil
+
         connection?.stateUpdateHandler = nil
         connection?.cancel()
         connection = nil
-        pendingSamples.removeAll(keepingCapacity: false)
-        frameCounter = 0
-    }
 
-    private static func sanitize(_ value: String) -> String {
-        let ascii = value.unicodeScalars.filter { $0.isASCII }
-        let name = String(String.UnicodeScalarView(ascii)).prefix(16)
-        return name.isEmpty ? "MisMeeter" : String(name)
+        fifo.clear()
+        frameCounter = 0
     }
 }

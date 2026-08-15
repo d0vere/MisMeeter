@@ -1,25 +1,75 @@
-# MisMeeter v0.3
+# MisMeeter v0.4
 
-iPhone microphone -> VBAN -> VoiceMeeter
+iPhone microphone -> VBAN -> VoiceMeeter, with no Windows client.
 
-## Features
-- Microphone capture with AVAudioEngine
-- VBAN AUDIO transmitter: 48 kHz, PCM16, mono, UDP
-- Default UDP port 6980
-- Configurable stream name and PC IPv4
-- Background audio mode
-- Live Activity + Dynamic Island
-- Mute/unmute via LiveActivityIntent
-- Muted state sends zero-valued PCM while keeping the stream alive
+## v0.4 changes
 
-## VoiceMeeter setup
-1. Open VoiceMeeter -> VBAN.
-2. Enable VBAN.
-3. Enable one VBAN IN stream.
-4. Set Stream Name to exactly the same value used by MisMeeter (default `MisMeeter`).
-5. Use UDP port 6980 unless changed.
-6. Enter your Windows LAN IPv4 in MisMeeter.
-7. Allow VoiceMeeter/VBAN through Windows Firewall.
+- 3 independent VBAN presets
+- smoother VBAN packet pacing
+- fixed 256-sample packet cadence at 48 kHz
+- software microphone gain control
+- default microphone gain: +12 dB
+- switched away from AVAudioSession `.measurement` mode
+- peak meter
+- mute keeps sending silence so VoiceMeeter's stream remains alive
+- Live Activity / Dynamic Island controls retained
+
+## VBAN format
+
+- 48,000 Hz
+- PCM signed Int16
+- Mono
+- 256 samples per packet
+- UDP
+- default port 6980
+
+At 48 kHz, 256 samples represent about 5.333 ms of audio. MisMeeter v0.4 uses a paced sender instead of sending packets in bursts whenever the audio callback happens.
+
+## Presets
+
+Each preset stores:
+
+- display name
+- Windows PC IPv4 / hostname
+- UDP port
+- VBAN stream name
+
+Select Preset 1, 2, or 3 before starting.
+
+Example:
+
+Preset 1
+- Name: Desktop
+- Host: 192.168.1.50
+- Port: 6980
+- Stream: MisMeeter
+
+Preset 2
+- Name: Gaming
+- Host: 192.168.1.50
+- Port: 6980
+- Stream: MicGame
+
+Preset 3
+- Name: Laptop
+- Host: 192.168.1.80
+- Port: 6980
+- Stream: iPhoneMic
+
+## VoiceMeeter
+
+Open VoiceMeeter -> VBAN and enable a VBAN IN stream whose Stream Name matches the selected MisMeeter preset.
+
+If you use multiple presets on the same PC, configure multiple VBAN IN rows with the corresponding stream names.
+
+Windows Firewall must allow UDP traffic to VoiceMeeter on the configured port.
+
+## Microphone gain
+
+The default software gain is +12 dB. You can change it from 0 to +24 dB.
+
+If the signal clips, lower the gain.
 
 ## Build
+
 GitHub Actions -> Build unsigned iOS IPA -> download `MisMeeter-unsigned`.

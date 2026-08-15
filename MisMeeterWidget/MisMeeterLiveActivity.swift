@@ -7,22 +7,29 @@ struct MisMeeterLiveActivity: Widget {
         ActivityConfiguration(for: MicActivityAttributes.self) { context in
             lockScreenView(context)
                 .activityBackgroundTint(
-                    context.state.isMuted ? Color.red.opacity(0.72) : Color.green.opacity(0.72)
+                    context.state.isMuted
+                        ? Color.red.opacity(0.72)
+                        : Color.green.opacity(0.72)
                 )
                 .activitySystemActionForegroundColor(.white)
+
         } dynamicIsland: { context in
             DynamicIsland {
                 DynamicIslandExpandedRegion(.leading) {
                     Label(
                         context.state.isMuted ? "MUTED" : "LIVE",
-                        systemImage: context.state.isMuted ? "mic.slash.fill" : "mic.fill"
+                        systemImage: context.state.isMuted
+                            ? "mic.slash.fill"
+                            : "mic.fill"
                     )
                     .font(.headline)
                 }
 
                 DynamicIslandExpandedRegion(.trailing) {
                     VStack(alignment: .trailing) {
-                        Text("VBAN").font(.caption.bold())
+                        Text(context.state.presetLabel)
+                            .font(.caption.bold())
+
                         Text(context.state.destinationLabel)
                             .font(.caption2)
                             .foregroundStyle(.secondary)
@@ -33,7 +40,9 @@ struct MisMeeterLiveActivity: Widget {
                     Button(intent: ToggleMuteIntent()) {
                         Label(
                             context.state.isMuted ? "UNMUTE" : "MUTE",
-                            systemImage: context.state.isMuted ? "mic.fill" : "mic.slash.fill"
+                            systemImage: context.state.isMuted
+                                ? "mic.fill"
+                                : "mic.slash.fill"
                         )
                         .font(.headline)
                         .frame(maxWidth: .infinity)
@@ -41,16 +50,27 @@ struct MisMeeterLiveActivity: Widget {
                     }
                     .buttonStyle(.borderedProminent)
                 }
+
             } compactLeading: {
                 Button(intent: ToggleMuteIntent()) {
-                    Image(systemName: context.state.isMuted ? "mic.slash.fill" : "mic.fill")
+                    Image(
+                        systemName: context.state.isMuted
+                            ? "mic.slash.fill"
+                            : "mic.fill"
+                    )
                 }
                 .buttonStyle(.plain)
+
             } compactTrailing: {
                 Text(context.state.isMuted ? "OFF" : "ON")
                     .font(.caption2.bold())
+
             } minimal: {
-                Image(systemName: context.state.isMuted ? "mic.slash.fill" : "mic.fill")
+                Image(
+                    systemName: context.state.isMuted
+                        ? "mic.slash.fill"
+                        : "mic.fill"
+                )
             }
             .keylineTint(context.state.isMuted ? .red : .green)
         }
@@ -70,12 +90,21 @@ struct MisMeeterLiveActivity: Widget {
                 .font(.system(size: 38))
 
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("MisMeeter").font(.headline)
-                    Text(context.state.isMuted ? "MICROPHONE MUTED" : "MICROPHONE ACTIVE")
-                        .font(.subheadline.bold())
-                    Text("VBAN • \(context.state.destinationLabel)")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    Text("MisMeeter")
+                        .font(.headline)
+
+                    Text(
+                        context.state.isMuted
+                            ? "MICROPHONE MUTED"
+                            : "MICROPHONE ACTIVE"
+                    )
+                    .font(.subheadline.bold())
+
+                    Text(
+                        "\(context.state.presetLabel) • \(context.state.destinationLabel)"
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 }
 
                 Spacer()
@@ -83,8 +112,12 @@ struct MisMeeterLiveActivity: Widget {
 
             Button(intent: ToggleMuteIntent()) {
                 Label(
-                    context.state.isMuted ? "UNMUTE MICROPHONE" : "MUTE MICROPHONE",
-                    systemImage: context.state.isMuted ? "mic.fill" : "mic.slash.fill"
+                    context.state.isMuted
+                        ? "UNMUTE MICROPHONE"
+                        : "MUTE MICROPHONE",
+                    systemImage: context.state.isMuted
+                        ? "mic.fill"
+                        : "mic.slash.fill"
                 )
                 .font(.headline)
                 .frame(maxWidth: .infinity)

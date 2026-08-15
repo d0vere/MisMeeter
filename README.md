@@ -1,41 +1,29 @@
 # MisMeeter
 
-Prototype iOS app to validate:
+MisMeeter is an experimental iOS microphone bridge for Windows.
 
-- Live Activity on Lock Screen
-- Dynamic Island presentation
-- interactive Mute / Unmute button
-- unsigned IPA build on GitHub Actions
+Current milestone:
 
-This first milestone **does not stream microphone audio yet**. It only validates the iOS/ActivityKit/sideload path.
+- Live Activity
+- Lock Screen UI
+- Dynamic Island UI
+- interactive mute/unmute using LiveActivityIntent
+- unsigned IPA built using GitHub Actions
 
-## Build on GitHub
+Microphone capture and network streaming are not implemented yet.
 
-Push this repository to GitHub. Then:
+## Build
 
-1. Open **Actions**
-2. Select **Build unsigned iOS IPA**
-3. Run the workflow (or push a commit)
-4. When it finishes, download the `MisMeeter-unsigned` artifact
-5. Extract it to obtain `MisMeeter.ipa`
-6. Resign/sideload the IPA with your usual tool
+GitHub:
 
-The GitHub runner does not need your Apple ID or signing certificate.
+Actions → Build unsigned iOS IPA
 
-## Test on iPhone
+Download:
 
-1. Launch MisMeeter
-2. Tap **Start Live Activity**
-3. Lock the phone and check the Lock Screen
-4. On a Dynamic Island iPhone, check the Island
-5. Expand the Live Activity and try **Mute / Unmute**
+MisMeeter-unsigned
 
-The button changes only the prototype `muted` state. Microphone capture and Windows streaming come later.
+Extract:
 
-## Notes
+MisMeeter.ipa
 
-- Deployment target: iOS 17.0
-- The Xcode project is generated during CI with XcodeGen from `project.yml`.
-- Bundle IDs are deliberately generic and may be rewritten by your sideloading tool:
-  - `dev.mismeeter.app`
-  - `dev.mismeeter.app.widget`
+Then resign/sideload the IPA using your preferred sideloading tool.

@@ -2,21 +2,36 @@ import ActivityKit
 import AppIntents
 
 struct ToggleMuteIntent: LiveActivityIntent {
-    static var title: LocalizedStringResource = "Mute or unmute microphone"
-    static var description = IntentDescription("Toggles the MisMeeter microphone state.")
+    static var title: LocalizedStringResource = "Toggle microphone"
+    static var description = IntentDescription("Mute or unmute MisMeeter.")
+
     static var openAppWhenRun: Bool = false
 
     func perform() async throws -> some IntentResult {
-        for activity in Activity<MicActivityAttributes>.activities {
-            let oldState = activity.content.state
-            let newState = MicActivityAttributes.ContentState(
-                isMuted: !oldState.isMuted,
-                connectionLabel: oldState.connectionLabel
+        print("MISMEETER: ToggleMuteIntent perform()")
+
+        let activities = Activity<MicActivityAttributes>.activities
+
+        print("MISMEETER: activities found = \(activities.count)")
+
+        for activity in activities {
+            let current = activity.content.state
+
+            print("MISMEETER: current isMuted = \(current.isMuted)")
+
+            let updated = MicActivityAttributes.ContentState(
+                isMuted: !current.isMuted,
+                connectionLabel: current.connectionLabel
             )
 
             await activity.update(
-                ActivityContent(state: newState, staleDate: nil)
+                ActivityContent(
+                    state: updated,
+                    staleDate: nil
+                )
             )
+
+            print("MISMEETER: updated isMuted = \(updated.isMuted)")
         }
 
         return .result()

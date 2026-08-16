@@ -204,8 +204,8 @@ struct ContentView: View {
 
                 Section {
                     Text(
-                        "v1.1 separates Foreground, Lock Transition and true Background. " +
-                        "Batching starts only in real background and adapts automatically from 4 to 6 or 8 packets if send gaps grow."
+                        "v1.2 bypasses the background-sensitive Network.framework/GCD send queue. " +
+                        "VBAN UDP is submitted through a pre-opened nonblocking socket directly from the Core Audio realtime cadence."
                     )
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -215,6 +215,11 @@ struct ContentView: View {
             .onAppear {
                 wireRuntimeCallbacks()
                 MisMeeterRuntime.shared.gainDB = Float(gainDB)
+
+                Task {
+                    await MisMeeterRuntime.shared
+                        .cleanupOrphanedLiveActivitiesIfIdle()
+                }
 
                 switch scenePhase {
                 case .active:

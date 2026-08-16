@@ -1,73 +1,58 @@
-# MisMeeter v1.1 — Lock Transition + Adaptive Background Batch
+# MisMeeter v1.2 — Direct Realtime UDP
 
-v1.1 is focused specifically on the pattern observed on-device:
+## Why this version
 
-- audio is excellent in foreground
-- a large disturbance occurs while the phone locks
-- after lock, some periods are smooth and others become fragmented
+On-device diagnostics showed:
 
-## Three transport states
+- Core Audio callback: 256 frames / 5.33 ms
+- Underruns: 0
+- Max network send gap after lock: ~88 ms
 
-### Foreground Realtime
-- batch = 1
-- 256 samples
-- minimum latency
+Therefore microphone capture is healthy while the ordinary networking queue is occasionally not
+scheduled for many audio periods after screen lock.
 
-### Lock Transition
-Triggered by SwiftUI scenePhase `.inactive`.
+## Realtime UDP experiment
 
-Important: v1.1 DOES NOT switch to background batching here.
+v1.2 removes Network.framework from the packet send hot path.
 
-It keeps:
-- batch = 1
-- realtime packet behaviour
+Before streaming:
+- create an IPv4 UDP socket
+- connect it to the configured VBAN destination
+- mark it O_NONBLOCK
+- increase SO_SNDBUF
+- preallocate the 540-byte VBAN packet buffer
 
-This avoids changing network timing at the same moment iOS is performing the lock transition.
+During each 256-frame AVAudioSinkNode callback:
+- update the preallocated VBAN header/frame counter
+- copy PCM16 samples
+- call nonblocking send()
 
-### Background Stable
-Triggered only by scenePhase `.background`.
+No GCD networking queue is required for the actual packet submission.
 
-Starts at:
-- batch = 4
-- 1024 samples
-- ~21.33 ms audio per queue wakeup
+This is intentionally an aggressive realtime experiment. The socket is nonblocking so the audio
+thread never waits for the network. A failed/EAGAIN send is counted in Underruns/Errors rather than
+blocking Core Audio.
 
-## Adaptive background batch
+Important: v1.2 realtime UDP requires an IPv4 address in presets. Hostname resolution is intentionally
+not performed on the audio thread.
 
-Every 5 seconds MisMeeter examines the maximum interval observed between packet sends.
+## Live Activity force-quit behaviour
 
-If max send gap > ~35 ms:
-- 4 -> 6 packets
-- then 6 -> 8 packets
+Apple intentionally keeps Live Activities independent of the host app process, so force-quitting the
+app does not automatically dismiss them.
 
-If the stream remains stable with max gaps < ~24 ms for ~15 seconds:
-- 8 -> 6
-- then 6 -> 4
+v1.2 improves the UX in two ways:
+1. On the next app launch, any orphan Live Activity is ended automatically when VBAN is not running.
+2. The Live Activity now includes an END button that asks ActivityKit to dismiss it immediately.
 
-This allows the sender to react to changing iOS background/network scheduling without permanently
-using the largest possible batch.
-
-## New diagnostics
-
-- Transport state
-- VBAN batch
-- Batch buffer
-- Max send gap
-
-Existing diagnostics remain:
-- Input callback
-- Actual I/O buffer
-- Capture rate
-- TX rate
-- Underruns
-- Packets sent
+There is no reliable public iOS callback that guarantees cleanup at the exact moment the user
+force-quits an already-backgrounded app.
 
 ## Existing features retained
 
-- AVAudioSinkNode realtime capture
-- Apple Voice Processing toggle
+- AVAudioSinkNode realtime microphone
+- Apple Voice Processing
 - 3 VBAN presets
 - software gain
 - Live Activity / Dynamic Island mute
-- direct VBAN UDP
 - 48 kHz PCM16 mono

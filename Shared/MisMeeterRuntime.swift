@@ -168,6 +168,27 @@ final class MisMeeterRuntime {
         transmitter.enterForeground()
     }
 
+    func cleanupOrphanedLiveActivitiesIfIdle() async {
+        guard !isStreaming else { return }
+
+        let finalState = MicActivityAttributes.ContentState(
+            isMuted: true,
+            isStreaming: false,
+            destinationLabel: "Stopped",
+            presetLabel: "Stopped"
+        )
+
+        for activity in Activity<MicActivityAttributes>.activities {
+            await activity.end(
+                ActivityContent(
+                    state: finalState,
+                    staleDate: nil
+                ),
+                dismissalPolicy: .immediate
+            )
+        }
+    }
+
     func syncLiveActivity() async {
         let preset = activePreset
 

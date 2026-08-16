@@ -37,18 +37,30 @@ struct MisMeeterLiveActivity: Widget {
                 }
 
                 DynamicIslandExpandedRegion(.bottom) {
-                    Button(intent: ToggleMuteIntent()) {
-                        Label(
-                            context.state.isMuted ? "UNMUTE" : "MUTE",
-                            systemImage: context.state.isMuted
-                                ? "mic.fill"
-                                : "mic.slash.fill"
-                        )
-                        .font(.headline)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 4)
+                    HStack {
+                        Button(intent: ToggleMuteIntent()) {
+                            Label(
+                                context.state.isMuted ? "UNMUTE" : "MUTE",
+                                systemImage: context.state.isMuted
+                                    ? "mic.fill"
+                                    : "mic.slash.fill"
+                            )
+                            .font(.headline)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 4)
+                        }
+                        .buttonStyle(.borderedProminent)
+
+                        Button(intent: EndLiveActivityIntent()) {
+                            Label(
+                                "END",
+                                systemImage: "xmark.circle.fill"
+                            )
+                            .font(.headline)
+                            .padding(.vertical, 4)
+                        }
+                        .buttonStyle(.bordered)
                     }
-                    .buttonStyle(.borderedProminent)
                 }
 
             } compactLeading: {
@@ -110,20 +122,32 @@ struct MisMeeterLiveActivity: Widget {
                 Spacer()
             }
 
-            Button(intent: ToggleMuteIntent()) {
-                Label(
-                    context.state.isMuted
-                        ? "UNMUTE MICROPHONE"
-                        : "MUTE MICROPHONE",
-                    systemImage: context.state.isMuted
-                        ? "mic.fill"
-                        : "mic.slash.fill"
-                )
-                .font(.headline)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 5)
+            HStack {
+                Button(intent: ToggleMuteIntent()) {
+                    Label(
+                        context.state.isMuted
+                            ? "UNMUTE"
+                            : "MUTE",
+                        systemImage: context.state.isMuted
+                            ? "mic.fill"
+                            : "mic.slash.fill"
+                    )
+                    .font(.headline)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 5)
+                }
+                .buttonStyle(.borderedProminent)
+
+                Button(intent: EndLiveActivityIntent()) {
+                    Label(
+                        "END",
+                        systemImage: "xmark.circle.fill"
+                    )
+                    .font(.headline)
+                    .padding(.vertical, 5)
+                }
+                .buttonStyle(.bordered)
             }
-            .buttonStyle(.borderedProminent)
         }
         .padding()
     }

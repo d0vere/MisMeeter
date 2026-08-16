@@ -21,12 +21,18 @@ final class VBANTransmitter {
     private var txWindowStartNS: UInt64?
     private var txSamplesInWindow: UInt64 = 0
 
-    private var isBackground = false
+    private var transportState: TransportState = .foregroundRealtime
     private var batchSize = 1
 
-    // Four VBAN frames = 1024 samples = ~21.33 ms @ 48 kHz.
-    // In background we intentionally keep at least one full batch ready.
-    private let backgroundBatchSize = 4
+    private var transitionStartNS: UInt64?
+    private var backgroundEnteredNS: UInt64?
+
+    private var lastSendNS: UInt64?
+    private var maxSendGapMS: Double = 0
+    private var recentMaxSendGapMS: Double = 0
+
+    private var adaptationWindowStartNS: UInt64?
+    private var stableBackgroundWindows = 0
 
     private(set) var preset = VBANPreset(
         name: "Preset 1",
@@ -44,8 +50,8 @@ final class VBANTransmitter {
     /// target ms, capture Hz, TX Hz, scheduler late ms, catch-up count
     var onPLLStats: ((Double, Double, Double, Double, UInt64) -> Void)?
 
-    /// background?, current batch size, buffered samples
-    var onTransportMode: ((Bool, Int, Int) -> Void)?
+    /// state, batch size, buffered samples, max send gap
+    var onTransportMode: ((TransportState, Int, Int, Double) -> Void)?
 
     func configure(
         preset: VBANPreset,
@@ -106,12 +112,20 @@ final class VBANTransmitter {
             self.measuredTXRate = 48_000
             self.txWindowStartNS = nil
             self.txSamplesInWindow = 0
+
+            self.transportState = .foregroundRealtime
+            self.batchSize = 1
+            self.transitionStartNS = nil
+            self.backgroundEnteredNS = nil
+
+            self.lastSendNS = nil
+            self.maxSendGapMS = 0
+            self.recentMaxSendGapMS = 0
+            self.adaptationWindowStartNS = nil
+            self.stableBackgroundWindows = 0
+
             self.clockEstimator.reset()
             self.fifo.clear()
-
-            self.batchSize = self.isBackground
-                ? self.backgroundBatchSize
-                : 1
 
             connection.start(queue: self.queue)
             self.publishStats()
@@ -131,38 +145,56 @@ final class VBANTransmitter {
         }
     }
 
-    func setBackgroundMode(_ background: Bool) {
+    /// Called for SwiftUI .inactive.
+    /// We deliberately keep foreground packet behaviour during this phase.
+    func beginLockTransition() {
         queue.async {
-            guard self.isBackground != background else { return }
+            guard self.transportState == .foregroundRealtime else { return }
 
-            self.isBackground = background
-            self.batchSize = background
-                ? self.backgroundBatchSize
-                : 1
+            self.transportState = .lockTransition
+            self.transitionStartNS = DispatchTime.now().uptimeNanoseconds
+            self.batchSize = 1
 
-            self.onStateChange?(
-                background
-                    ? "VBAN background stable"
-                    : "VBAN realtime ready"
-            )
-
-            // Do not throw away queued audio during the transition.
-            // Foreground immediately drains all complete frames.
-            self.drainAvailablePackets()
+            self.onStateChange?("VBAN lock transition")
             self.publishTransportMode()
         }
     }
 
-    /// The AVAudioSinkNode render callback is the master audio clock.
-    ///
-    /// Foreground:
-    ///   every complete 256-sample frame is sent immediately.
-    ///
-    /// Background:
-    ///   wait for 4 complete VBAN frames, then send the 4 UDP datagrams
-    ///   consecutively from one serial-queue wakeup. This trades ~21 ms of
-    ///   batching latency for much greater tolerance to background scheduling
-    ///   and Wi-Fi power-management jitter.
+    /// Called only when SwiftUI scenePhase is truly .background.
+    func enterBackground() {
+        queue.async {
+            guard self.transportState != .backgroundStable else { return }
+
+            self.transportState = .backgroundStable
+            self.backgroundEnteredNS = DispatchTime.now().uptimeNanoseconds
+            self.adaptationWindowStartNS = self.backgroundEnteredNS
+            self.stableBackgroundWindows = 0
+
+            // Start conservatively.
+            self.batchSize = 4
+
+            self.onStateChange?("VBAN background stable")
+            self.publishTransportMode()
+        }
+    }
+
+    func enterForeground() {
+        queue.async {
+            self.transportState = .foregroundRealtime
+            self.batchSize = 1
+            self.transitionStartNS = nil
+            self.backgroundEnteredNS = nil
+            self.adaptationWindowStartNS = nil
+            self.stableBackgroundWindows = 0
+            self.recentMaxSendGapMS = 0
+
+            self.drainAvailablePackets()
+
+            self.onStateChange?("VBAN realtime ready")
+            self.publishTransportMode()
+        }
+    }
+
     func enqueue(_ samples: [Int16]) {
         guard !samples.isEmpty else { return }
 
@@ -180,6 +212,8 @@ final class VBANTransmitter {
 
             self.fifo.append(samples)
             self.drainAvailablePackets()
+            self.adaptBackgroundBatchIfNeeded()
+
             self.onBufferLevel?(self.fifo.count)
             self.publishStats()
             self.publishTransportMode()
@@ -187,40 +221,100 @@ final class VBANTransmitter {
     }
 
     private func drainAvailablePackets() {
-        let requiredSamples =
-            VBANPacket.samplesPerPacket * batchSize
-
-        while fifo.count >= requiredSamples {
-            var blocks: [[Int16]] = []
-            blocks.reserveCapacity(batchSize)
-
-            for _ in 0..<batchSize {
-                guard let block = fifo.pop(
-                    VBANPacket.samplesPerPacket
-                ) else {
-                    return
-                }
-                blocks.append(block)
-            }
-
-            // Deliberately perform all sends in the same queue execution window.
-            for block in blocks {
-                send(block)
-            }
-        }
-
-        // In foreground, don't intentionally retain a complete VBAN frame.
-        if !isBackground {
+        switch transportState {
+        case .foregroundRealtime, .lockTransition:
             while let block = fifo.pop(
                 VBANPacket.samplesPerPacket
             ) {
                 send(block)
             }
+
+        case .backgroundStable:
+            let required =
+                VBANPacket.samplesPerPacket * batchSize
+
+            while fifo.count >= required {
+                var blocks: [[Int16]] = []
+                blocks.reserveCapacity(batchSize)
+
+                for _ in 0..<batchSize {
+                    guard let block = fifo.pop(
+                        VBANPacket.samplesPerPacket
+                    ) else {
+                        return
+                    }
+                    blocks.append(block)
+                }
+
+                for block in blocks {
+                    send(block)
+                }
+            }
         }
+    }
+
+    private func adaptBackgroundBatchIfNeeded() {
+        guard transportState == .backgroundStable else { return }
+
+        let now = DispatchTime.now().uptimeNanoseconds
+
+        if adaptationWindowStartNS == nil {
+            adaptationWindowStartNS = now
+            return
+        }
+
+        guard let start = adaptationWindowStartNS,
+              now &- start >= 5_000_000_000 else {
+            return
+        }
+
+        // If background send gaps exceed ~35 ms, become more conservative.
+        if recentMaxSendGapMS > 35 {
+            if batchSize < 6 {
+                batchSize = 6
+            } else if batchSize < 8 {
+                batchSize = 8
+            }
+            stableBackgroundWindows = 0
+        } else if recentMaxSendGapMS < 24 {
+            stableBackgroundWindows += 1
+
+            // After 15 s of stable operation, reduce latency one step.
+            if stableBackgroundWindows >= 3 {
+                if batchSize > 6 {
+                    batchSize = 6
+                } else if batchSize > 4 {
+                    batchSize = 4
+                }
+                stableBackgroundWindows = 0
+            }
+        } else {
+            stableBackgroundWindows = 0
+        }
+
+        recentMaxSendGapMS = 0
+        adaptationWindowStartNS = now
+
+        publishTransportMode()
     }
 
     private func send(_ source: [Int16]) {
         guard let connection else { return }
+
+        let now = DispatchTime.now().uptimeNanoseconds
+
+        if let previous = lastSendNS {
+            let gapMS =
+                Double(now - previous) / 1_000_000.0
+
+            maxSendGapMS = max(maxSendGapMS, gapMS)
+            recentMaxSendGapMS = max(
+                recentMaxSendGapMS,
+                gapMS
+            )
+        }
+
+        lastSendNS = now
 
         let outgoing =
             muted
@@ -295,9 +389,10 @@ final class VBANTransmitter {
 
     private func publishTransportMode() {
         onTransportMode?(
-            isBackground,
+            transportState,
             batchSize,
-            fifo.count
+            fifo.count,
+            maxSendGapMS
         )
     }
 
@@ -316,6 +411,17 @@ final class VBANTransmitter {
         measuredTXRate = 48_000
         txWindowStartNS = nil
         txSamplesInWindow = 0
+
+        transportState = .foregroundRealtime
+        batchSize = 1
+        transitionStartNS = nil
+        backgroundEnteredNS = nil
+
+        lastSendNS = nil
+        maxSendGapMS = 0
+        recentMaxSendGapMS = 0
+        adaptationWindowStartNS = nil
+        stableBackgroundWindows = 0
 
         onPrimedChange?(false)
     }

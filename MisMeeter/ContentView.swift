@@ -40,9 +40,10 @@ struct ContentView: View {
     @State private var schedulerLateMS = 0.0
     @State private var catchUpPackets: UInt64 = 0
     @State private var voiceProcessingActive = false
-    @State private var backgroundTransport = false
+    @State private var transportState = TransportState.foregroundRealtime
     @State private var currentBatchSize = 1
     @State private var backgroundBufferedSamples = 0
+    @State private var maxSendGapMS = 0.0
 
     var body: some View {
         NavigationStack {
@@ -184,13 +185,17 @@ struct ContentView: View {
                         LabeledContent("Software scheduler", value: "Disabled")
                         LabeledContent("Capture clock", value: "Audio realtime")
                         LabeledContent(
-                            "App transport",
-                            value: backgroundTransport ? "Background Stable" : "Foreground Realtime"
+                            "Transport state",
+                            value: transportState.rawValue
                         )
                         LabeledContent("VBAN batch", value: "\(currentBatchSize) packet(s)")
                         LabeledContent(
                             "Batch buffer",
                             value: "\(backgroundBufferedSamples) samples"
+                        )
+                        LabeledContent(
+                            "Max send gap",
+                            value: String(format: "%.2f ms", maxSendGapMS)
                         )
                         LabeledContent("Underruns", value: "\(underruns)")
                         LabeledContent("Packets sent", value: "\(packetsSent)")
@@ -199,8 +204,8 @@ struct ContentView: View {
 
                 Section {
                     Text(
-                        "v1.0 keeps the Core Audio realtime clock and automatically switches the network sender: " +
-                        "1 VBAN packet per frame in foreground, 4-packet batches in background for lock-screen stability."
+                        "v1.1 separates Foreground, Lock Transition and true Background. " +
+                        "Batching starts only in real background and adapts automatically from 4 to 6 or 8 packets if send gaps grow."
                     )
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -211,16 +216,33 @@ struct ContentView: View {
                 wireRuntimeCallbacks()
                 MisMeeterRuntime.shared.gainDB = Float(gainDB)
 
-                MisMeeterRuntime.shared.setApplicationBackground(
-                    scenePhase != .active
-                )
+                switch scenePhase {
+                case .active:
+                    MisMeeterRuntime.shared.enterForegroundTransport()
+                case .inactive:
+                    MisMeeterRuntime.shared.beginLockTransition()
+                case .background:
+                    MisMeeterRuntime.shared.enterBackgroundTransport()
+                @unknown default:
+                    break
+                }
             }
             .onChange(of: scenePhase) { _, newPhase in
-                let background = newPhase != .active
+                switch newPhase {
+                case .active:
+                    MisMeeterRuntime.shared.enterForegroundTransport()
 
-                MisMeeterRuntime.shared.setApplicationBackground(
-                    background
-                )
+                case .inactive:
+                    // Keep batch=1 while iOS is transitioning to lock/background.
+                    MisMeeterRuntime.shared.beginLockTransition()
+
+                case .background:
+                    // Only now enable background batching.
+                    MisMeeterRuntime.shared.enterBackgroundTransport()
+
+                @unknown default:
+                    break
+                }
             }
         }
     }
@@ -383,11 +405,12 @@ struct ContentView: View {
             }
         }
 
-        MisMeeterRuntime.shared.onTransportMode = { background, batchSize, bufferedSamples in
+        MisMeeterRuntime.shared.onTransportMode = { state, batchSize, bufferedSamples, maxGapMS in
             DispatchQueue.main.async {
-                backgroundTransport = background
+                transportState = state
                 currentBatchSize = batchSize
                 backgroundBufferedSamples = bufferedSamples
+                maxSendGapMS = maxGapMS
             }
         }
     }
@@ -451,9 +474,10 @@ struct ContentView: View {
             schedulerLateMS = 0
             catchUpPackets = 0
             voiceProcessingActive = false
-            backgroundTransport = false
+            transportState = .foregroundRealtime
             currentBatchSize = 1
             backgroundBufferedSamples = 0
+            maxSendGapMS = 0
             status = "Stopped"
         }
     }

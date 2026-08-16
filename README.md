@@ -1,55 +1,59 @@
-# MisMeeter v0.8 — PLL / Clock Locked VBAN
+# MisMeeter v0.9 — Realtime Core Audio + Apple Voice Processing
 
-v0.8 addresses the key result observed in v0.7:
+## Screen-lock fix
 
-- sender buffer could remain around 300+ ms
-- adaptive target was much lower
-- old clock correction hit its maximum
-- underruns remained zero
+v0.8 produced excellent foreground audio but could fragment after the iPhone locked.
+The remaining weak point was the software DispatchSourceTimer used to pace VBAN.
 
-That indicates the sender scheduler was losing average throughput and silently accumulating latency.
+v0.9 removes that timer.
 
-## v0.8 changes
+Microphone capture now uses AVAudioSinkNode, Apple's realtime input-chain node intended for
+realtime/VoIP processing. The audio render callback itself becomes the VBAN master clock.
 
-### 1. Measured capture clock
-MisMeeter now estimates the real captured sample rate from:
-- number of samples received
-- monotonic elapsed time
+Pipeline:
 
-The measured rate is smoothed over multi-second windows.
+iPhone mic
+-> optional Apple Voice Processing
+-> AVAudioSinkNode realtime callback
+-> PCM16 conversion
+-> VBAN packetizer
+-> UDP / VoiceMeeter
 
-### 2. PLL-locked TX rate
-VBAN packet cadence follows the measured capture rate rather than assuming that a software timer
-will execute at exactly 48,000 samples/s.
+There is no independent packet timer to be throttled/coalesced by screen lock.
 
-FIFO occupancy adds only a smooth rate trim.
+## Apple Voice Processing
 
-### 3. No more "reset deadline to now"
-If iOS wakes the sender late, v0.8 preserves the original packet-clock phase.
+A new toggle enables Apple's VoiceProcessingIO processing.
 
-The old approach could permanently lose time on every late wakeup and grow latency.
+Apple's voice processing stack is designed for spoken voice and includes processing such as:
+- noise suppression
+- automatic gain control / voice gain processing
+- echo cancellation
 
-### 4. Controlled catch-up
-When a timer fires late, MisMeeter sends a small bounded number of already-due VBAN packets.
-This lets the sender recover average throughput without producing a huge 100 ms callback burst.
+The audio engine must be stopped when enabling/disabling voice processing, so the toggle is
+disabled while VBAN is streaming.
 
-### 5. Adaptive latency
-Auto still lowers the target after stable windows and restores safety quickly after underruns.
+When enabled, MisMeeter uses:
+- AVAudioSession category: playAndRecord
+- mode: voiceChat
+- AVAudioInputNode.setVoiceProcessingEnabled(true)
 
-## New diagnostics
+When disabled it keeps the more neutral recording path.
 
-- Adaptive target
-- Capture rate
-- TX rate
-- Scheduler late
-- Catch-up packets
-- Underruns
-- Packets sent
+## Existing features retained
 
-A healthy result should look roughly like:
+- 3 VBAN presets
+- 0...+24 dB software gain
+- Live Activity / Dynamic Island mute
+- background audio
+- direct VBAN UDP
+- PCM16 / mono / 48 kHz
 
-- Capture rate close to 48,000 Hz
-- TX rate close to Capture rate
-- Sender buffer oscillating around the target rather than growing indefinitely
-- Underruns = 0
-- Catch-up packets can increase slowly; that is expected
+## First test
+
+1. VoiceMeeter VBAN Network Quality: try Optimal first.
+2. Start MisMeeter with Apple Voice Processing OFF.
+3. Verify Input callback. With AVAudioSinkNode it should ideally be close to the hardware quantum,
+   not the old 4800-frame tap callback.
+4. Lock the iPhone for at least 30 seconds and listen.
+5. Then stop VBAN, enable Apple Voice Processing, restart and compare noise/voice quality.

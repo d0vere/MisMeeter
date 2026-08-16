@@ -21,6 +21,7 @@ struct ContentView: View {
 
     @AppStorage("microphoneGainDB") private var gainDB = 12.0
     @AppStorage("transmissionModeV08") private var transmissionModeRaw = VBANTransmissionMode.automatic.rawValue
+    @AppStorage("appleVoiceProcessing") private var appleVoiceProcessing = false
 
     @State private var isStreaming = MisMeeterRuntime.shared.isStreaming
     @State private var isMuted = MisMeeterRuntime.shared.isMuted
@@ -37,6 +38,7 @@ struct ContentView: View {
     @State private var effectiveTXHz = 48000.0
     @State private var schedulerLateMS = 0.0
     @State private var catchUpPackets: UInt64 = 0
+    @State private var voiceProcessingActive = false
 
     var body: some View {
         NavigationStack {
@@ -53,33 +55,37 @@ struct ContentView: View {
                     presetEditor
                 }
 
-                Section("Transmission") {
-                    Picker(
-                        "TX mode",
-                        selection: $transmissionModeRaw
-                    ) {
-                        ForEach(VBANTransmissionMode.allCases) { mode in
-                            Text(mode.title).tag(mode.rawValue)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-                    .disabled(isStreaming)
-
-                    let mode = VBANTransmissionMode(
-                        rawValue: transmissionModeRaw
-                    ) ?? .balanced
-
-                    Text(mode.detail)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-
+                Section("Transport") {
+                    LabeledContent("Clock", value: "AVAudioSinkNode realtime")
                     Text(
-                        "Higher stability prebuffers more iPhone audio before sending. " +
-                        "This is intended to make VoiceMeeter Fast/Optimal usable even though iOS " +
-                        "is currently delivering 4800-frame (~100 ms) microphone callbacks."
+                        "The VBAN sender now follows the realtime Core Audio input render clock. " +
+                        "It does not depend on a DispatchSourceTimer, so screen lock should not fragment packet timing."
                     )
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                }
+
+                Section("Audio processing") {
+                    Toggle(
+                        "Apple Voice Processing",
+                        isOn: $appleVoiceProcessing
+                    )
+                    .disabled(isStreaming)
+
+                    Text(
+                        "Uses Apple's VoiceProcessingIO DSP for speech: noise suppression, " +
+                        "automatic gain processing and echo cancellation. " +
+                        "It can change the tonal character of the microphone. Stop VBAN before changing it."
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                    if isStreaming {
+                        LabeledContent(
+                            "Voice Processing active",
+                            value: voiceProcessingActive ? "Yes" : "No"
+                        )
+                    }
                 }
 
                 Section("Microphone") {
@@ -168,11 +174,11 @@ struct ContentView: View {
                             value: String(format: "%.2f ms", actualIOBufferMS)
                         )
                         LabeledContent("Sender primed", value: senderPrimed ? "Yes" : "No")
-                        LabeledContent("Adaptive target", value: String(format: "%.0f ms", adaptiveLatencyMS))
+                        LabeledContent("Sender target", value: "Realtime")
                         LabeledContent("Capture rate", value: String(format: "%.1f Hz", measuredCaptureHz))
                         LabeledContent("TX rate", value: String(format: "%.1f Hz", effectiveTXHz))
-                        LabeledContent("Scheduler late", value: String(format: "%.2f ms", schedulerLateMS))
-                        LabeledContent("Catch-up packets", value: "\(catchUpPackets)")
+                        LabeledContent("Software scheduler", value: "Disabled")
+                        LabeledContent("Capture clock", value: "Audio realtime")
                         LabeledContent("Underruns", value: "\(underruns)")
                         LabeledContent("Packets sent", value: "\(packetsSent)")
                     }
@@ -180,8 +186,8 @@ struct ContentView: View {
 
                 Section {
                     Text(
-                        "v0.8 measures the real capture clock, locks TX rate to it, and preserves packet phase when iOS wakes the sender late. " +
-                        "Small catch-up bursts remove accumulated latency instead of letting the FIFO grow forever."
+                        "v0.9 uses AVAudioSinkNode as the realtime capture/packet clock. " +
+                        "This removes the background-sensitive software timer entirely."
                     )
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -346,6 +352,12 @@ struct ContentView: View {
                 catchUpPackets = catchUps
             }
         }
+
+        MisMeeterRuntime.shared.onVoiceProcessingState = { enabled in
+            DispatchQueue.main.async {
+                voiceProcessingActive = enabled
+            }
+        }
     }
 
     private func startStreaming() async {
@@ -375,7 +387,8 @@ struct ContentView: View {
             try await MisMeeterRuntime.shared.start(
                 preset: preset,
                 gainDB: Float(gainDB),
-                transmissionMode: mode
+                transmissionMode: mode,
+                voiceProcessingEnabled: appleVoiceProcessing
             )
 
             isStreaming = true
@@ -405,6 +418,7 @@ struct ContentView: View {
             effectiveTXHz = 48000
             schedulerLateMS = 0
             catchUpPackets = 0
+            voiceProcessingActive = false
             status = "Stopped"
         }
     }

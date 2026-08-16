@@ -28,6 +28,7 @@ final class MisMeeterRuntime {
     var onPacketsSent: ((UInt64) -> Void)?
     var onPrimedChange: ((Bool) -> Void)?
     var onPLLStats: ((Double, Double, Double, Double, UInt64) -> Void)?
+    var onVoiceProcessingState: ((Bool) -> Void)?
 
     private init() {
         let tx = VBANTransmitter()
@@ -40,6 +41,10 @@ final class MisMeeterRuntime {
 
         microphone.onAudioDiagnostics = { [weak self] frames, duration in
             self?.onAudioDiagnostics?(frames, duration)
+        }
+
+        microphone.onVoiceProcessingState = { [weak self] enabled in
+            self?.onVoiceProcessingState?(enabled)
         }
 
         transmitter.onStateChange = { [weak self] value in
@@ -86,7 +91,8 @@ final class MisMeeterRuntime {
     func start(
         preset: VBANPreset,
         gainDB: Float,
-        transmissionMode: VBANTransmissionMode
+        transmissionMode: VBANTransmissionMode,
+        voiceProcessingEnabled: Bool
     ) async throws {
         stateQueue.sync {
             _preset = preset
@@ -103,7 +109,7 @@ final class MisMeeterRuntime {
         transmitter.start()
 
         do {
-            try microphone.start()
+            try microphone.start(voiceProcessingEnabled: voiceProcessingEnabled)
         } catch {
             transmitter.stop()
             throw error

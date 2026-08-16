@@ -1,5 +1,6 @@
 import AVFoundation
 import Foundation
+import AudioToolbox
 
 enum MicrophoneEngineError: LocalizedError {
     case noInput
@@ -18,12 +19,14 @@ enum MicrophoneEngineError: LocalizedError {
 final class MicrophoneEngine {
     private let engine = AVAudioEngine()
     private let transmitter: VBANTransmitter
+    private var sinkNode: AVAudioSinkNode?
 
     private let gainLock = NSLock()
     private var _gainDB: Float = 12
 
     var onMeter: ((Float) -> Void)?
     var onAudioDiagnostics: ((Int, Double) -> Void)?
+    var onVoiceProcessingState: ((Bool) -> Void)?
 
     init(transmitter: VBANTransmitter) {
         self.transmitter = transmitter
@@ -42,27 +45,50 @@ final class MicrophoneEngine {
         }
     }
 
-    func start() throws {
+    func start(voiceProcessingEnabled: Bool) throws {
+        // Apple requires the engine to be stopped before switching voice processing.
+        if engine.isRunning {
+            engine.stop()
+        }
+
+        if let oldSink = sinkNode {
+            engine.disconnectNodeInput(oldSink)
+            engine.detach(oldSink)
+            sinkNode = nil
+        }
+
         let session = AVAudioSession.sharedInstance()
 
-        try session.setCategory(
-            .record,
-            mode: .default,
-            options: []
-        )
+        if voiceProcessingEnabled {
+            try session.setCategory(
+                .playAndRecord,
+                mode: .voiceChat,
+                options: [.defaultToSpeaker]
+            )
+        } else {
+            try session.setCategory(
+                .record,
+                mode: .default,
+                options: []
+            )
+        }
 
-        // Preferences must be requested before activation. They are hints:
-        // after activation we inspect the actual values chosen by iOS.
         try session.setPreferredSampleRate(VBANPacket.sampleRate)
         try session.setPreferredIOBufferDuration(
             VBANPacket.packetDurationSeconds
         )
-
         try session.setActive(true)
 
         guard session.isInputAvailable else {
             throw MicrophoneEngineError.noInput
         }
+
+        let input = engine.inputNode
+
+        // VoiceProcessingIO provides Apple's tuned speech processing:
+        // noise suppression, echo cancellation and automatic gain processing.
+        try input.setVoiceProcessingEnabled(voiceProcessingEnabled)
+        onVoiceProcessingState?(input.isVoiceProcessingEnabled)
 
         let actualRate = session.sampleRate
         let actualDuration = session.ioBufferDuration
@@ -71,36 +97,44 @@ final class MicrophoneEngine {
             throw MicrophoneEngineError.unsupportedSampleRate(actualRate)
         }
 
+        let format = input.outputFormat(forBus: 0)
+        let commonFormat = format.commonFormat
+
         print(
-            "MISMEETER: actual audio session: \(actualRate) Hz, " +
-            "\(actualDuration * 1000) ms I/O buffer"
+            "MISMEETER: realtime sink: \(actualRate) Hz, " +
+            "\(actualDuration * 1000) ms I/O, " +
+            "voiceProcessing=\(input.isVoiceProcessingEnabled)"
         )
 
-        let input = engine.inputNode
-        let format = input.outputFormat(forBus: 0)
+        let sink = AVAudioSinkNode { [weak self] _, frameCount, audioBufferList -> OSStatus in
+            guard let self else { return noErr }
 
-        input.removeTap(onBus: 0)
-
-        // 256 is a request, not a guarantee. If iOS hands us 512/1024 samples,
-        // VBANTransmitter splits them into consecutive 256-sample packets.
-        input.installTap(
-            onBus: 0,
-            bufferSize: AVAudioFrameCount(VBANPacket.samplesPerPacket),
-            format: format
-        ) { [weak self] buffer, _ in
-            self?.process(
-                buffer,
+            self.processRealtime(
+                audioBufferList: audioBufferList,
+                frameCount: Int(frameCount),
+                commonFormat: commonFormat,
                 actualIOBufferDuration: actualDuration
             )
+
+            return noErr
         }
+
+        sinkNode = sink
+        engine.attach(sink)
+        engine.connect(input, to: sink, format: format)
 
         engine.prepare()
         try engine.start()
     }
 
     func stop() {
-        engine.inputNode.removeTap(onBus: 0)
         engine.stop()
+
+        if let sink = sinkNode {
+            engine.disconnectNodeInput(sink)
+            engine.detach(sink)
+            sinkNode = nil
+        }
 
         do {
             try AVAudioSession.sharedInstance().setActive(
@@ -112,12 +146,17 @@ final class MicrophoneEngine {
         }
     }
 
-    private func process(
-        _ buffer: AVAudioPCMBuffer,
+    private func processRealtime(
+        audioBufferList: UnsafePointer<AudioBufferList>,
+        frameCount: Int,
+        commonFormat: AVAudioCommonFormat,
         actualIOBufferDuration: Double
     ) {
-        let frameCount = Int(buffer.frameLength)
         guard frameCount > 0 else { return }
+
+        // Built-in iPhone microphone is mono in this graph; use the first buffer.
+        let audioBuffer = audioBufferList.pointee.mBuffers
+        guard let data = audioBuffer.mData else { return }
 
         let currentGainDB = gainDB
         let linearGain = powf(10, currentGainDB / 20)
@@ -127,13 +166,12 @@ final class MicrophoneEngine {
 
         var peak: Float = 0
 
-        switch buffer.format.commonFormat {
+        switch commonFormat {
         case .pcmFormatFloat32:
-            guard let channels = buffer.floatChannelData else { return }
-            let channel = channels[0]
+            let pointer = data.assumingMemoryBound(to: Float.self)
 
             for index in 0..<frameCount {
-                let raw = channel[index]
+                let raw = pointer[index]
                 peak = max(peak, abs(raw))
 
                 let limited = tanhf(raw * linearGain)
@@ -147,11 +185,10 @@ final class MicrophoneEngine {
             }
 
         case .pcmFormatInt16:
-            guard let channels = buffer.int16ChannelData else { return }
-            let channel = channels[0]
+            let pointer = data.assumingMemoryBound(to: Int16.self)
 
             for index in 0..<frameCount {
-                let raw = Float(channel[index]) / Float(Int16.max)
+                let raw = Float(pointer[index]) / Float(Int16.max)
                 peak = max(peak, abs(raw))
 
                 let limited = tanhf(raw * linearGain)
@@ -171,8 +208,8 @@ final class MicrophoneEngine {
         onMeter?(min(1, peak * linearGain))
         onAudioDiagnostics?(frameCount, actualIOBufferDuration)
 
-        // No network work on the real-time audio callback:
-        // enqueue() switches immediately onto the transmitter's serial queue.
+        // The sink callback itself supplies the realtime cadence.
+        // Network work stays on VBANTransmitter's serial queue.
         transmitter.enqueue(output)
     }
 }

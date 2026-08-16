@@ -29,6 +29,7 @@ final class MisMeeterRuntime {
     var onPrimedChange: ((Bool) -> Void)?
     var onPLLStats: ((Double, Double, Double, Double, UInt64) -> Void)?
     var onVoiceProcessingState: ((Bool) -> Void)?
+    var onTransportMode: ((Bool, Int, Int) -> Void)?
 
     private init() {
         let tx = VBANTransmitter()
@@ -68,6 +69,10 @@ final class MisMeeterRuntime {
         }
         transmitter.onPLLStats = { [weak self] targetMS, captureHz, txHz, lateMS, catchUps in
             self?.onPLLStats?(targetMS, captureHz, txHz, lateMS, catchUps)
+        }
+
+        transmitter.onTransportMode = { [weak self] background, batchSize, bufferedSamples in
+            self?.onTransportMode?(background, batchSize, bufferedSamples)
         }
     }
 
@@ -149,6 +154,10 @@ final class MisMeeterRuntime {
             _isMuted = value
         }
         transmitter.setMuted(value)
+    }
+
+    func setApplicationBackground(_ background: Bool) {
+        transmitter.setBackgroundMode(background)
     }
 
     func syncLiveActivity() async {

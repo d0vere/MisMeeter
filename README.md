@@ -1,59 +1,61 @@
-# MisMeeter v0.9 — Realtime Core Audio + Apple Voice Processing
+# MisMeeter v1.0 — Background Stable VBAN
 
-## Screen-lock fix
+## Background / Lock Screen transport
 
-v0.8 produced excellent foreground audio but could fragment after the iPhone locked.
-The remaining weak point was the software DispatchSourceTimer used to pace VBAN.
+The Core Audio side from v0.9 is retained:
 
-v0.9 removes that timer.
-
-Microphone capture now uses AVAudioSinkNode, Apple's realtime input-chain node intended for
-realtime/VoIP processing. The audio render callback itself becomes the VBAN master clock.
-
-Pipeline:
-
-iPhone mic
+iPhone microphone
 -> optional Apple Voice Processing
 -> AVAudioSinkNode realtime callback
--> PCM16 conversion
--> VBAN packetizer
--> UDP / VoiceMeeter
+-> PCM16
+-> VBAN
 
-There is no independent packet timer to be throttled/coalesced by screen lock.
+The remaining issue was network delivery while the app was backgrounded / the screen was locked.
+
+v1.0 uses SwiftUI scenePhase to switch the network transport automatically.
+
+### Foreground Realtime
+
+- 1 VBAN frame = 256 samples
+- send immediately
+- ~5.33 ms packet cadence
+- minimum sender-side latency
+
+### Background Stable
+
+- collect 4 VBAN frames
+- 1024 samples total
+- ~21.33 ms worth of audio
+- send the 4 UDP datagrams consecutively from the same serial-queue execution window
+
+This reduces dependency on the frequency at which iOS schedules ordinary networking work while
+the screen is locked. The Core Audio capture callback itself remains realtime.
+
+## Diagnostics
+
+Status shows:
+
+- App transport: Foreground Realtime / Background Stable
+- VBAN batch: 1 or 4 packets
+- Batch buffer: queued samples
+- Input callback
+- Actual I/O buffer
+- Capture rate
+- TX rate
+- Underruns
 
 ## Apple Voice Processing
 
-A new toggle enables Apple's VoiceProcessingIO processing.
+Retained from v0.9.
 
-Apple's voice processing stack is designed for spoken voice and includes processing such as:
-- noise suppression
-- automatic gain control / voice gain processing
-- echo cancellation
-
-The audio engine must be stopped when enabling/disabling voice processing, so the toggle is
-disabled while VBAN is streaming.
-
-When enabled, MisMeeter uses:
-- AVAudioSession category: playAndRecord
-- mode: voiceChat
-- AVAudioInputNode.setVoiceProcessingEnabled(true)
-
-When disabled it keeps the more neutral recording path.
+When enabled, MisMeeter uses Apple's VoiceProcessingIO path for speech-oriented processing such as
+noise suppression, automatic voice gain processing and acoustic echo cancellation.
 
 ## Existing features retained
 
 - 3 VBAN presets
-- 0...+24 dB software gain
+- software gain slider
 - Live Activity / Dynamic Island mute
 - background audio
-- direct VBAN UDP
-- PCM16 / mono / 48 kHz
-
-## First test
-
-1. VoiceMeeter VBAN Network Quality: try Optimal first.
-2. Start MisMeeter with Apple Voice Processing OFF.
-3. Verify Input callback. With AVAudioSinkNode it should ideally be close to the hardware quantum,
-   not the old 4800-frame tap callback.
-4. Lock the iPhone for at least 30 seconds and listen.
-5. Then stop VBAN, enable Apple Voice Processing, restart and compare noise/voice quality.
+- direct VBAN UDP to VoiceMeeter
+- 48 kHz PCM16 mono

@@ -2,6 +2,7 @@ import AVFoundation
 import SwiftUI
 
 struct ContentView: View {
+    @Environment(\.scenePhase) private var scenePhase
     @AppStorage("selectedPreset") private var selectedPreset = 0
 
     @AppStorage("p1Name") private var p1Name = "Preset 1"
@@ -39,6 +40,9 @@ struct ContentView: View {
     @State private var schedulerLateMS = 0.0
     @State private var catchUpPackets: UInt64 = 0
     @State private var voiceProcessingActive = false
+    @State private var backgroundTransport = false
+    @State private var currentBatchSize = 1
+    @State private var backgroundBufferedSamples = 0
 
     var body: some View {
         NavigationStack {
@@ -179,6 +183,15 @@ struct ContentView: View {
                         LabeledContent("TX rate", value: String(format: "%.1f Hz", effectiveTXHz))
                         LabeledContent("Software scheduler", value: "Disabled")
                         LabeledContent("Capture clock", value: "Audio realtime")
+                        LabeledContent(
+                            "App transport",
+                            value: backgroundTransport ? "Background Stable" : "Foreground Realtime"
+                        )
+                        LabeledContent("VBAN batch", value: "\(currentBatchSize) packet(s)")
+                        LabeledContent(
+                            "Batch buffer",
+                            value: "\(backgroundBufferedSamples) samples"
+                        )
                         LabeledContent("Underruns", value: "\(underruns)")
                         LabeledContent("Packets sent", value: "\(packetsSent)")
                     }
@@ -186,8 +199,8 @@ struct ContentView: View {
 
                 Section {
                     Text(
-                        "v0.9 uses AVAudioSinkNode as the realtime capture/packet clock. " +
-                        "This removes the background-sensitive software timer entirely."
+                        "v1.0 keeps the Core Audio realtime clock and automatically switches the network sender: " +
+                        "1 VBAN packet per frame in foreground, 4-packet batches in background for lock-screen stability."
                     )
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -197,6 +210,17 @@ struct ContentView: View {
             .onAppear {
                 wireRuntimeCallbacks()
                 MisMeeterRuntime.shared.gainDB = Float(gainDB)
+
+                MisMeeterRuntime.shared.setApplicationBackground(
+                    scenePhase != .active
+                )
+            }
+            .onChange(of: scenePhase) { _, newPhase in
+                let background = newPhase != .active
+
+                MisMeeterRuntime.shared.setApplicationBackground(
+                    background
+                )
             }
         }
     }
@@ -358,6 +382,14 @@ struct ContentView: View {
                 voiceProcessingActive = enabled
             }
         }
+
+        MisMeeterRuntime.shared.onTransportMode = { background, batchSize, bufferedSamples in
+            DispatchQueue.main.async {
+                backgroundTransport = background
+                currentBatchSize = batchSize
+                backgroundBufferedSamples = bufferedSamples
+            }
+        }
     }
 
     private func startStreaming() async {
@@ -419,6 +451,9 @@ struct ContentView: View {
             schedulerLateMS = 0
             catchUpPackets = 0
             voiceProcessingActive = false
+            backgroundTransport = false
+            currentBatchSize = 1
+            backgroundBufferedSamples = 0
             status = "Stopped"
         }
     }

@@ -29,8 +29,8 @@ targets:
         CFBundleInfoDictionaryVersion: "6.0"
         CFBundleName: $(PRODUCT_NAME)
         CFBundlePackageType: APPL
-        CFBundleShortVersionString: "0.9"
-        CFBundleVersion: "9"
+        CFBundleShortVersionString: "1.0"
+        CFBundleVersion: "10"
         LSRequiresIPhoneOS: true
         NSSupportsLiveActivities: true
         NSMicrophoneUsageDescription: "MisMeeter uses the iPhone microphone to transmit audio to VoiceMeeter over VBAN."
@@ -69,8 +69,8 @@ targets:
         CFBundleInfoDictionaryVersion: "6.0"
         CFBundleName: $(PRODUCT_NAME)
         CFBundlePackageType: XPC!
-        CFBundleShortVersionString: "0.9"
-        CFBundleVersion: "9"
+        CFBundleShortVersionString: "1.0"
+        CFBundleVersion: "10"
         NSExtension:
           NSExtensionPointIdentifier: com.apple.widgetkit-extension
 

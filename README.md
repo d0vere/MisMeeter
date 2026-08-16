@@ -1,4 +1,4 @@
-# MisMeeter v1.2 — Direct Realtime UDP
+# MisMeeter v1.2.1 — Direct Realtime UDP
 
 ## Why this version
 
@@ -56,3 +56,8 @@ force-quits an already-backgrounded app.
 - software gain
 - Live Activity / Dynamic Island mute
 - 48 kHz PCM16 mono
+
+
+## v1.2.1
+
+Build fix for iOS/Xcode 16.4: use `SOCK_DGRAM` directly because it is already an `Int32` on this SDK.

@@ -108,7 +108,7 @@ final class VBANTransmitter {
 
             let fd = Darwin.socket(
                 AF_INET,
-                Int32(SOCK_DGRAM.rawValue),
+                SOCK_DGRAM,
                 IPPROTO_UDP
             )
 

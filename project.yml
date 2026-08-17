@@ -11,15 +11,20 @@ settings:
     IPHONEOS_DEPLOYMENT_TARGET: "17.0"
     TARGETED_DEVICE_FAMILY: "1"
 
+schemes:
+  MisMeeter:
+    build:
+      targets:
+        MisMeeter: all
+        MisMeeterWidget: all
+
 targets:
   MisMeeter:
     type: application
     platform: iOS
-
     sources:
       - path: Shared
       - path: MisMeeter
-
     info:
       path: MisMeeter/Generated-Info.plist
       properties:
@@ -29,25 +34,29 @@ targets:
         CFBundleInfoDictionaryVersion: "6.0"
         CFBundleName: $(PRODUCT_NAME)
         CFBundlePackageType: APPL
-        CFBundleShortVersionString: "2.1.1"
-        CFBundleVersion: "24"
+        CFBundleShortVersionString: "3.0.0"
+        CFBundleVersion: "30"
         LSRequiresIPhoneOS: true
         NSSupportsLiveActivities: true
-        NSMicrophoneUsageDescription: "MisMeeter uses the iPhone microphone to transmit audio to VoiceMeeter over VBAN."
-        NSLocalNetworkUsageDescription: "MisMeeter sends microphone audio to your VoiceMeeter PC over the local network."
+        NSMicrophoneUsageDescription: "MisMeeter uses the iPhone microphone to transmit live audio to your VBAN destination."
+        NSLocalNetworkUsageDescription: "MisMeeter sends and receives VBAN audio on your local network."
         UIBackgroundModes:
           - audio
+        CFBundleURLTypes:
+          - CFBundleURLName: dev.mismeeter.app
+            CFBundleURLSchemes:
+              - mismeeter
         UILaunchScreen: {}
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
-
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.mismeeter.app
         PRODUCT_NAME: MisMeeter
         GENERATE_INFOPLIST_FILE: NO
         TARGETED_DEVICE_FAMILY: "1"
-
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        CODE_SIGN_ENTITLEMENTS: MisMeeter/MisMeeter.entitlements
     dependencies:
       - target: MisMeeterWidget
         embed: true
@@ -55,25 +64,25 @@ targets:
   MisMeeterWidget:
     type: app-extension
     platform: iOS
-
     sources:
-      - path: Shared
       - path: MisMeeterWidget
-
+      - path: Shared/MicActivityAttributes.swift
+      - path: Shared/SharedAppState.swift
+      - path: Shared/ToggleMuteIntent.swift
+      - path: Shared/EndLiveActivityIntent.swift
     info:
       path: MisMeeterWidget/Generated-Info.plist
       properties:
-        CFBundleDisplayName: MisMeeter Live Activity
+        CFBundleDisplayName: MisMeeter
         CFBundleExecutable: $(EXECUTABLE_NAME)
         CFBundleIdentifier: $(PRODUCT_BUNDLE_IDENTIFIER)
         CFBundleInfoDictionaryVersion: "6.0"
         CFBundleName: $(PRODUCT_NAME)
         CFBundlePackageType: XPC!
-        CFBundleShortVersionString: "2.1.1"
-        CFBundleVersion: "24"
+        CFBundleShortVersionString: "3.0.0"
+        CFBundleVersion: "30"
         NSExtension:
           NSExtensionPointIdentifier: com.apple.widgetkit-extension
-
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.mismeeter.app.widget
@@ -81,3 +90,4 @@ targets:
         GENERATE_INFOPLIST_FILE: NO
         SKIP_INSTALL: YES
         TARGETED_DEVICE_FAMILY: "1"
+        CODE_SIGN_ENTITLEMENTS: MisMeeterWidget/MisMeeterWidget.entitlements

@@ -15,18 +15,19 @@ struct MisMeeterLiveActivity: Widget {
                 // RX is kept on the left and TX on the right, with the preset labels growing
                 // outward from their indicators instead of putting content over the camera.
                 DynamicIslandExpandedRegion(.leading) {
-                    HStack(spacing: 6) {
+                    HStack(spacing: 4) {
+                        if context.state.isReceiving {
+                            receiveIndicator(context.state)
+                                .fixedSize()
+                                .accessibilityLabel(context.state.isReceiveMuted ? "Receive audio muted" : "Receive audio active")
+                        }
                         Text(context.state.receivePresetLabel)
                             .font(.caption2.weight(.semibold))
                             .lineLimit(1)
-                            .minimumScaleFactor(0.7)
-                        Spacer(minLength: 2)
-                        if context.state.isReceiving {
-                            receiveIndicator(context.state)
-                                .accessibilityLabel(context.state.isReceiveMuted ? "Receive audio muted" : "Receive audio active")
-                        }
+                            .minimumScaleFactor(0.68)
+                            .allowsTightening(true)
                     }
-                    .padding(.trailing, 12)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
                 }
 
                 DynamicIslandExpandedRegion(.center) {
@@ -36,18 +37,19 @@ struct MisMeeterLiveActivity: Widget {
                 }
 
                 DynamicIslandExpandedRegion(.trailing) {
-                    HStack(spacing: 6) {
+                    HStack(spacing: 4) {
                         if context.state.isStreaming {
                             microphoneIndicator(context.state)
+                                .fixedSize()
                                 .accessibilityLabel(context.state.isMuted ? "Microphone muted" : "Microphone active")
                         }
-                        Spacer(minLength: 2)
                         Text(context.state.sendPresetLabel)
                             .font(.caption2.weight(.semibold))
                             .lineLimit(1)
-                            .minimumScaleFactor(0.7)
+                            .minimumScaleFactor(0.68)
+                            .allowsTightening(true)
                     }
-                    .padding(.leading, 12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
 
                 DynamicIslandExpandedRegion(.bottom) {

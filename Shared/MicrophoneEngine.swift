@@ -87,6 +87,29 @@ final class MicrophoneEngine {
         var adaptationWindowStartTicks: UInt64 = 0
         var stableSinceTicks: UInt64 = 0
     }
+
+    private let gainLock =
+        OSAllocatedUnfairLock(
+            initialState: Float(12)
+        )
+
+    private let diagnosticsLock =
+        OSAllocatedUnfairLock(
+            initialState:
+                DiagnosticsState()
+        )
+
+    private struct DiagnosticsState {
+        var previousWallClockNS: UInt64?
+        var maxWallClockGapMS: Double = 0
+        var gapsOver10: UInt64 = 0
+        var gapsOver15: UInt64 = 0
+        var gapsOver25: UInt64 = 0
+        var gapsOver50: UInt64 = 0
+        var callbackCount: UInt64 = 0
+        var lastFrameCount = 0
+    }
+
     var onMeter: ((Float) -> Void)?
     var onAudioDiagnostics: ((Int, Double) -> Void)?
     var onVoiceProcessingState: ((Bool) -> Void)?

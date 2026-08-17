@@ -69,7 +69,7 @@ private struct MisMeeterWidgetView: View {
             HStack {
                 Image(systemName: entry.state.isMuted ? "mic.slash.fill" : "waveform.circle.fill")
                     .font(.title2)
-                    .foregroundStyle(entry.state.isMuted ? .orange : (entry.state.isStreaming ? .green : .secondary))
+                    .foregroundStyle(entry.state.isMuted ? .red : (entry.state.isStreaming ? .green : .secondary))
                     .widgetAccentable()
                 Spacer()
                 Text(entry.state.isStreaming ? "LIVE" : "READY")
@@ -87,12 +87,20 @@ private struct MisMeeterWidgetView: View {
                 .lineLimit(1)
 
             if entry.state.isStreaming {
-                Button(intent: ToggleMuteIntent()) {
-                    Label(entry.state.isMuted ? "Unmute" : "Mute",
-                          systemImage: entry.state.isMuted ? "mic.fill" : "mic.slash.fill")
-                        .frame(maxWidth: .infinity)
+                HStack(spacing: 8) {
+                    Button(intent: ToggleMuteIntent()) {
+                        Image(systemName: entry.state.isMuted ? "mic.fill" : "mic.slash.fill")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+
+                    Button(intent: EndLiveActivityIntent()) {
+                        Image(systemName: "stop.fill")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(.red)
                 }
-                .buttonStyle(.borderedProminent)
             } else {
                 Link(destination: URL(string: "mismeeter://home")!) {
                     Label("Open", systemImage: "arrow.up.forward.app.fill")

@@ -1,4 +1,4 @@
-# Senior iOS review notes — MisMeeter 3.0.0
+# Senior iOS review notes — MisMeeter 3.1.0
 
 ## Root cause addressed
 The previous lock-screen mitigation focused on a secondary TX scheduling thread. The capture callback already had diagnostics showing that microphone delivery could remain regular while the TX worker experienced wake gaps. The old worker then intentionally trimmed stale PCM and resumed near-live audio, which protects latency but creates missing audio at the destination.
@@ -33,3 +33,13 @@ A full iOS SDK semantic build cannot run in this Linux environment. GitHub Actio
 5. Exercise Mute/Unmute and Stop from Dynamic Island, Lock Screen Live Activity and Home Screen widget.
 6. Run TX + RX simultaneously and verify speaker route remains stable.
 7. Test interruption recovery for calls/Siri and Wi-Fi route changes before production release.
+
+## 3.1.0 UX/state pass
+
+- Dynamic Island compact presentation now renders only a small microphone glyph on the right side: green while live, red while muted. Expanded controls remain available on deliberate expansion.
+- Lock Screen Live Activity is slimmer and retains Mute/Stop controls.
+- External Stop immediately clears the shared transport snapshot and foreground activation reconciles runtime/shared state to prevent stale Mute/Stop UI.
+- Root navigation is now a custom floating material capsule instead of the fixed TabView bar; it hides while editing preset text fields.
+- Navigation order is Home (TX), Receive (RX Home), Presets, Settings.
+- The former Monitor screen is integrated into Settings as Transport, Core Audio and Receiver diagnostic sections.
+- Small and medium widgets expose both Mute and Stop while TX is active.

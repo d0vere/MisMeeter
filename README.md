@@ -1,4 +1,4 @@
-# MisMeeter 3.0.0 — Audio-clocked VBAN for iOS
+# MisMeeter 3.1.0 — Audio-clocked VBAN for iOS
 
 MisMeeter streams the iPhone microphone to a VBAN/VoiceMeeter destination and can independently receive a VBAN stream back to the iPhone.
 
@@ -29,16 +29,17 @@ The app keeps `UIBackgroundModes = audio` and an active `.playAndRecord` audio s
 ### UI / UX rebuild
 The app UI was rebuilt around four system-native areas:
 - **Home** — transmission state, level meter, mute, start/stop and live-surface status
-- **Routes** — three TX and three RX presets with dedicated editors
-- **Monitor** — Core Audio, VBAN and RX clock/jitter diagnostics
+- **Receive** — a dedicated RX Home with listening state, receive buffer and quality metrics
+- **Presets** — three TX and three RX presets with dedicated editors
+- **Settings** — capture/background controls plus the integrated Core Audio, VBAN and RX diagnostics monitor
 - **Settings** — capture engine, gain, background architecture and system-surface status
 
 The project is compiled with the iOS 26 SDK / Xcode 26.6 so standard navigation, tabs, sheets and controls adopt Apple’s current Liquid Glass design language while keeping iOS 17 as the deployment target.
 
-### Live Activity + Dynamic Island + Widget
+### Live Activity + compact Dynamic Island microphone indicator + Widget
 These are first-class surfaces in 3.0:
 - Lock Screen Live Activity
-- Dynamic Island compact/minimal/expanded presentations
+- compact Dynamic Island microphone indicator compact/minimal/expanded presentations
 - Home Screen small and medium widget
 - Lock Screen accessory circular and rectangular widget
 - Mute and Stop App Intent actions while TX is active
@@ -58,7 +59,7 @@ A new waveform/glass app icon is included in `MisMeeter/Assets.xcassets/AppIcon.
 - regenerates the Xcode project
 - validates generated plists and entitlements
 - builds the app and Widget Extension for generic iOS device with signing disabled
-- packages `MisMeeter-3.0.0-unsigned.ipa`
+- packages `MisMeeter-3.1.0-unsigned.ipa`
 - uploads the IPA and failure logs
 
 ## Local generation

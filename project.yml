@@ -34,7 +34,7 @@ targets:
         CFBundleInfoDictionaryVersion: "6.0"
         CFBundleName: $(PRODUCT_NAME)
         CFBundlePackageType: APPL
-        CFBundleShortVersionString: "3.0.0"
+        CFBundleShortVersionString: "3.1.0"
         CFBundleVersion: "30"
         LSRequiresIPhoneOS: true
         NSSupportsLiveActivities: true
@@ -79,7 +79,7 @@ targets:
         CFBundleInfoDictionaryVersion: "6.0"
         CFBundleName: $(PRODUCT_NAME)
         CFBundlePackageType: XPC!
-        CFBundleShortVersionString: "3.0.0"
+        CFBundleShortVersionString: "3.1.0"
         CFBundleVersion: "30"
         NSExtension:
           NSExtensionPointIdentifier: com.apple.widgetkit-extension

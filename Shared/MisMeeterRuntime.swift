@@ -188,6 +188,17 @@ final class MisMeeterRuntime {
         microphone.setBackgroundMode(false)
     }
 
+    func reconcileExternalControlState() async {
+        let snapshot = SharedAppState.readSnapshot()
+        if isStreaming && !snapshot.isStreaming {
+            await stop()
+            return
+        }
+        if isStreaming && snapshot.isMuted != isMuted {
+            setMuted(snapshot.isMuted)
+        }
+    }
+
     func cleanupOrphanedLiveActivitiesIfIdle() async {
         guard !isStreaming else { return }
         for activity in Activity<MicActivityAttributes>.activities {

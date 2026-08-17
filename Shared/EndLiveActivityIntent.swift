@@ -9,18 +9,19 @@ struct EndLiveActivityIntent: LiveActivityIntent {
     func perform() async throws -> some IntentResult {
         var snapshot = SharedAppState.readSnapshot()
         snapshot.isStreaming = false
-        snapshot.isMuted = true
-        snapshot.status = "Stopping…"
+        snapshot.isMuted = false
+        snapshot.startedAt = nil
+        snapshot.status = snapshot.isReceiving ? "Listening" : "Ready"
         SharedAppState.writeSnapshot(snapshot)
         SharedAppState.issue(.stopStreaming)
 
         let state = MicActivityAttributes.ContentState(
-            isMuted: true,
+            isMuted: false,
             isStreaming: false,
             isReceiving: snapshot.isReceiving,
             destinationLabel: snapshot.destination,
             presetLabel: snapshot.presetName,
-            startedAt: snapshot.startedAt,
+            startedAt: nil,
             statusLabel: "Stopped"
         )
         for activity in Activity<MicActivityAttributes>.activities {

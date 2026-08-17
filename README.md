@@ -87,3 +87,22 @@ It also uses an adaptive jitter target:
 New RX diagnostics:
 - Clock correction
 - Adaptive target
+
+
+## v1.5 Stability
+
+### RX
+- Fixes a real re-prime bug: when the adaptive jitter target rises above the currently buffered
+  audio, playback is now paused until the new target is genuinely rebuilt.
+- Replaces AVAudioUnitVarispeed with AVAudioUnitTimePitch for pitch-preserving clock correction.
+- Clock servo can correct from 0.98x to 1.02x when the buffer is far from target.
+- Underflow raises target by 50 ms immediately, up to 600 ms.
+- Stable target reduction is intentionally slower.
+
+### TX lock-screen experiment
+A new `Lock-screen TX stabilizer` (enabled by default) adds a completely silent AVAudioSourceNode to
+the microphone AVAudioEngine output path. The engine's own mixer remains muted. This keeps both sides
+of the `playAndRecord` hardware I/O graph rendering while the iPhone is locked, while VBAN still uses
+the direct nonblocking UDP sender.
+
+This can consume more battery. It can be disabled from the app when TX is stopped.

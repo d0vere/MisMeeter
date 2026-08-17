@@ -43,6 +43,9 @@ struct ContentView: View {
     @AppStorage("appleVoiceProcessing")
     private var appleVoiceProcessing = false
 
+    @AppStorage("backgroundOutputKeepAlive")
+    private var backgroundOutputKeepAlive = true
+
     @AppStorage("transmissionModeV08")
     private var transmissionModeRaw =
         VBANTransmissionMode.automatic.rawValue
@@ -174,6 +177,19 @@ struct ContentView: View {
                 isOn: $appleVoiceProcessing
             )
             .disabled(isStreaming)
+
+            Toggle(
+                "Lock-screen TX stabilizer",
+                isOn: $backgroundOutputKeepAlive
+            )
+            .disabled(isStreaming)
+
+            Text(
+                "Keeps a silent output render path active while the microphone is streaming. " +
+                "It may use more battery, but is intended to reduce Wi-Fi/network jitter after locking the iPhone."
+            )
+            .font(.caption)
+            .foregroundStyle(.secondary)
 
             HStack {
                 Image(
@@ -522,7 +538,7 @@ struct ContentView: View {
 
             Slider(
                 value: buffer,
-                in: 40...300,
+                in: 40...600,
                 step: 10
             )
             .disabled(isReceiving)
@@ -758,7 +774,9 @@ struct ContentView: View {
                     gainDB: Float(gainDB),
                     transmissionMode: mode,
                     voiceProcessingEnabled:
-                        appleVoiceProcessing
+                        appleVoiceProcessing,
+                    backgroundOutputKeepAlive:
+                        backgroundOutputKeepAlive
                 )
 
             isStreaming = true

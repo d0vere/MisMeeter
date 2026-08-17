@@ -171,15 +171,26 @@ final class PlaybackRingBuffer {
     }
 
 
-    func setTargetFrames(_ frames: Int) {
+    func setTargetFrames(
+        _ frames: Int,
+        forceReprimeIfBelowTarget: Bool = true
+    ) {
         lock.withLock { state in
-            state.targetFrames = max(
+            let newTarget = max(
                 256,
                 min(capacityFrames / 2, frames)
             )
 
-            if !state.primed &&
-                state.countFrames >= state.targetFrames {
+            state.targetFrames = newTarget
+
+            // Important: if the safety target is raised while the current
+            // queue is below it, stop consuming and genuinely rebuild the
+            // requested jitter margin. v1.4 could leave `primed = true`
+            // with e.g. 125 ms buffered against a 300 ms target.
+            if forceReprimeIfBelowTarget &&
+                state.countFrames < newTarget {
+                state.primed = false
+            } else if state.countFrames >= newTarget {
                 state.primed = true
             }
         }

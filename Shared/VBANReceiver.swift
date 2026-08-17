@@ -32,7 +32,7 @@ final class VBANReceiver {
 
     private let engine = AVAudioEngine()
     private var sourceNode: AVAudioSourceNode?
-    private var varispeed: AVAudioUnitVarispeed?
+    private var timePitch: AVAudioUnitTimePitch?
 
     private let ring = PlaybackRingBuffer()
 
@@ -173,11 +173,13 @@ final class VBANReceiver {
             return noErr
         }
 
-        let speed = AVAudioUnitVarispeed()
+        let speed = AVAudioUnitTimePitch()
         speed.rate = 1.0
+        speed.pitch = 0
+        speed.overlap = 8.0
 
         sourceNode = node
-        varispeed = speed
+        timePitch = speed
 
         engine.attach(node)
         engine.attach(speed)
@@ -204,7 +206,7 @@ final class VBANReceiver {
             engine.detach(node)
             engine.detach(speed)
             sourceNode = nil
-            varispeed = nil
+            timePitch = nil
             throw error
         }
 
@@ -253,10 +255,10 @@ final class VBANReceiver {
             sourceNode = nil
         }
 
-        if let speed = varispeed {
+        if let speed = timePitch {
             engine.disconnectNodeOutput(speed)
             engine.detach(speed)
-            varispeed = nil
+            timePitch = nil
         }
 
         ring.reset(
@@ -306,9 +308,9 @@ final class VBANReceiver {
     }
 
     /// VBAN sender and iPhone hardware have independent clocks.
-    /// Keep the jitter buffer centered by changing playback speed by
-    /// at most +/- 0.5%. This is small enough to be practically inaudible
-    /// but prevents the buffer slowly drifting into underflow/overflow.
+    /// v1.5 uses AVAudioUnitTimePitch so playback rate can be corrected
+    /// more aggressively without intentionally shifting pitch. The servo
+    /// keeps the jitter buffer near the selected/adaptive target.
     private func updateClockRecovery() {
         guard isRunning else { return }
 
@@ -327,23 +329,33 @@ final class VBANReceiver {
             ) /
             Double(targetFrames)
 
+        // Dead-zone prevents constant tiny speed changes around target.
+        let effectiveError: Double
+        if abs(error) < 0.08 {
+            effectiveError = 0
+        } else {
+            effectiveError = error
+        }
+
+        // Up to +/-2% when the buffer is badly displaced. Since TimePitch
+        // preserves pitch, this is much less objectionable than Varispeed.
         let desiredRate =
             Float(
                 max(
-                    0.995,
+                    0.98,
                     min(
-                        1.005,
-                        1.0 + error * 0.003
+                        1.02,
+                        1.0 + effectiveError * 0.015
                     )
                 )
             )
 
         currentRate =
-            currentRate * 0.90 +
-            desiredRate * 0.10
+            currentRate * 0.82 +
+            desiredRate * 0.18
 
         DispatchQueue.main.async { [weak self] in
-            self?.varispeed?.rate =
+            self?.timePitch?.rate =
                 self?.currentRate ?? 1.0
         }
 
@@ -352,11 +364,12 @@ final class VBANReceiver {
             lastUnderflowCount
 
         if hadNewUnderflow {
-            // Add 20 ms of safety quickly after an underflow.
+            // Add 50 ms immediately after an underflow. This also
+            // forces a genuine re-prime if the queue is below the new target.
             adaptiveTargetMS =
                 min(
-                    300,
-                    adaptiveTargetMS + 20
+                    600,
+                    adaptiveTargetMS + 50
                 )
 
             ring.setTargetFrames(
@@ -370,9 +383,9 @@ final class VBANReceiver {
         } else if stats.primed {
             stableControlWindows += 1
 
-            // After 15 s without underflow, slowly move back toward
+            // After 30 s without underflow, slowly move back toward
             // the user's configured buffer.
-            if stableControlWindows >= 30 &&
+            if stableControlWindows >= 60 &&
                 adaptiveTargetMS >
                     configuredBufferMS {
                 adaptiveTargetMS =

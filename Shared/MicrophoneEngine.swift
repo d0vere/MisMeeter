@@ -20,6 +20,7 @@ final class MicrophoneEngine {
     private let engine = AVAudioEngine()
     private let transmitter: VBANTransmitter
     private var sinkNode: AVAudioSinkNode?
+    private var keepAliveSourceNode: AVAudioSourceNode?
 
     private let gainLock = NSLock()
     private var _gainDB: Float = 12
@@ -45,7 +46,7 @@ final class MicrophoneEngine {
         }
     }
 
-    func start(voiceProcessingEnabled: Bool) throws {
+    func start(voiceProcessingEnabled: Bool, backgroundOutputKeepAlive: Bool = true) throws {
         // Apple requires the engine to be stopped before switching voice processing.
         if engine.isRunning {
             engine.stop()
@@ -55,6 +56,12 @@ final class MicrophoneEngine {
             engine.disconnectNodeInput(oldSink)
             engine.detach(oldSink)
             sinkNode = nil
+        }
+
+        if let oldKeepAlive = keepAliveSourceNode {
+            engine.disconnectNodeOutput(oldKeepAlive)
+            engine.detach(oldKeepAlive)
+            keepAliveSourceNode = nil
         }
 
         let session = AVAudioSession.sharedInstance()
@@ -125,6 +132,49 @@ final class MicrophoneEngine {
         engine.attach(sink)
         engine.connect(input, to: sink, format: format)
 
+        if backgroundOutputKeepAlive {
+            // Keep the output side of the hardware I/O graph actively rendering
+            // while TX is running. The samples are exactly zero and this engine's
+            // mixer is muted, so nothing is audible.
+            let outputFormat = AVAudioFormat(
+                standardFormatWithSampleRate: VBANPacket.sampleRate,
+                channels: 2
+            )!
+
+            let silence = AVAudioSourceNode(
+                format: outputFormat
+            ) { _, _, frameCount, audioBufferList -> OSStatus in
+                let buffers = UnsafeMutableAudioBufferListPointer(
+                    audioBufferList
+                )
+
+                for buffer in buffers {
+                    if let data = buffer.mData {
+                        memset(
+                            data,
+                            0,
+                            Int(buffer.mDataByteSize)
+                        )
+                    }
+                }
+
+                return noErr
+            }
+
+            keepAliveSourceNode = silence
+            engine.attach(silence)
+            engine.connect(
+                silence,
+                to: engine.mainMixerNode,
+                format: outputFormat
+            )
+
+            // Silence only this engine; the independent RX engine remains audible.
+            engine.mainMixerNode.outputVolume = 0
+        } else {
+            engine.mainMixerNode.outputVolume = 1
+        }
+
         engine.prepare()
         try engine.start()
     }
@@ -137,6 +187,14 @@ final class MicrophoneEngine {
             engine.detach(sink)
             sinkNode = nil
         }
+
+        if let silence = keepAliveSourceNode {
+            engine.disconnectNodeOutput(silence)
+            engine.detach(silence)
+            keepAliveSourceNode = nil
+        }
+
+        engine.mainMixerNode.outputVolume = 1
 
         if deactivateSession {
             do {

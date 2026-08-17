@@ -123,7 +123,8 @@ final class MisMeeterRuntime {
         preset: VBANPreset,
         gainDB: Float,
         transmissionMode: VBANTransmissionMode,
-        voiceProcessingEnabled: Bool
+        voiceProcessingEnabled: Bool,
+        backgroundOutputKeepAlive: Bool = true
     ) async throws {
         stateQueue.sync {
             _preset = preset
@@ -140,7 +141,10 @@ final class MisMeeterRuntime {
         transmitter.start()
 
         do {
-            try microphone.start(voiceProcessingEnabled: voiceProcessingEnabled)
+            try microphone.start(
+                voiceProcessingEnabled: voiceProcessingEnabled,
+                backgroundOutputKeepAlive: backgroundOutputKeepAlive
+            )
         } catch {
             transmitter.stop()
             throw error

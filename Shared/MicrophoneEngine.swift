@@ -1,33 +1,46 @@
 import AVFoundation
-import Foundation
 import AudioToolbox
+import Foundation
+import os
 
 enum MicrophoneEngineError: LocalizedError {
     case noInput
+    case audioUnitCreation(OSStatus)
+    case audioUnitConfiguration(OSStatus)
     case unsupportedSampleRate(Double)
 
     var errorDescription: String? {
         switch self {
         case .noInput:
             return "No microphone input is available."
+        case .audioUnitCreation(let status):
+            return "Could not create microphone Audio Unit (\(status))."
+        case .audioUnitConfiguration(let status):
+            return "Could not configure microphone Audio Unit (\(status))."
         case .unsupportedSampleRate(let rate):
-            return "The microphone is running at \(Int(rate)) Hz. MisMeeter currently requires 48000 Hz."
+            return "The microphone session is running at \(Int(rate)) Hz; MisMeeter requires 48000 Hz."
         }
     }
 }
 
 final class MicrophoneEngine {
-    private let engine = AVAudioEngine()
     private let transmitter: VBANTransmitter
-    private var sinkNode: AVAudioSinkNode?
-    private var keepAliveSourceNode: AVAudioSourceNode?
 
-    private let gainLock = NSLock()
-    private var _gainDB: Float = 12
+    private var audioUnit: AudioUnit?
+    private var renderBuffer =
+        [Float](repeating: 0, count: 4096)
+
+    private let gainLock =
+        OSAllocatedUnfairLock(initialState: Float(12))
+
+    private var lastCallbackHostTime: UInt64?
+    private var maxCallbackGapMS: Double = 0
+    private var callbackCount: UInt64 = 0
 
     var onMeter: ((Float) -> Void)?
     var onAudioDiagnostics: ((Int, Double) -> Void)?
     var onVoiceProcessingState: ((Bool) -> Void)?
+    var onCaptureGap: ((Double) -> Void)?
 
     init(transmitter: VBANTransmitter) {
         self.transmitter = transmitter
@@ -35,243 +48,462 @@ final class MicrophoneEngine {
 
     var gainDB: Float {
         get {
-            gainLock.lock()
-            defer { gainLock.unlock() }
-            return _gainDB
+            gainLock.withLock { $0 }
         }
         set {
-            gainLock.lock()
-            _gainDB = max(0, min(24, newValue))
-            gainLock.unlock()
+            gainLock.withLock {
+                $0 = max(0, min(24, newValue))
+            }
         }
     }
 
-    func start(voiceProcessingEnabled: Bool, backgroundOutputKeepAlive: Bool = true) throws {
-        // Apple requires the engine to be stopped before switching voice processing.
-        if engine.isRunning {
-            engine.stop()
-        }
-
-        if let oldSink = sinkNode {
-            engine.disconnectNodeInput(oldSink)
-            engine.detach(oldSink)
-            sinkNode = nil
-        }
-
-        if let oldKeepAlive = keepAliveSourceNode {
-            engine.disconnectNodeOutput(oldKeepAlive)
-            engine.detach(oldKeepAlive)
-            keepAliveSourceNode = nil
-        }
-
-        let session = AVAudioSession.sharedInstance()
-
-        if voiceProcessingEnabled {
-            try session.setCategory(
-                .playAndRecord,
-                mode: .voiceChat,
-                options: [.defaultToSpeaker]
-            )
-        } else {
-            // playAndRecord keeps the output path available so the independent
-            // VBAN receiver can play through the iPhone speaker while TX is active.
-            try session.setCategory(
-                .playAndRecord,
-                mode: .default,
-                options: [.defaultToSpeaker]
-            )
-        }
-
-        try session.setPreferredSampleRate(VBANPacket.sampleRate)
-        try session.setPreferredIOBufferDuration(
-            VBANPacket.packetDurationSeconds
+    func start(
+        voiceProcessingEnabled: Bool,
+        backgroundOutputKeepAlive: Bool = true
+    ) throws {
+        stop(
+            deactivateSession: false
         )
-        try session.setActive(true)
+
+        let session =
+            AVAudioSession.sharedInstance()
+
+        try AudioSessionCoordinator.shared
+            .configureForDuplex(
+                voiceProcessing:
+                    voiceProcessingEnabled
+            )
 
         guard session.isInputAvailable else {
             throw MicrophoneEngineError.noInput
         }
 
-        let input = engine.inputNode
-
-        // VoiceProcessingIO provides Apple's tuned speech processing:
-        // noise suppression, echo cancellation and automatic gain processing.
-        try input.setVoiceProcessingEnabled(voiceProcessingEnabled)
-        onVoiceProcessingState?(input.isVoiceProcessingEnabled)
-
-        let actualRate = session.sampleRate
-        let actualDuration = session.ioBufferDuration
-
-        guard abs(actualRate - VBANPacket.sampleRate) < 1 else {
-            throw MicrophoneEngineError.unsupportedSampleRate(actualRate)
+        guard abs(
+            session.sampleRate -
+            VBANPacket.sampleRate
+        ) < 1 else {
+            throw MicrophoneEngineError
+                .unsupportedSampleRate(
+                    session.sampleRate
+                )
         }
 
-        let format = input.outputFormat(forBus: 0)
-        let commonFormat = format.commonFormat
+        let subtype: OSType =
+            voiceProcessingEnabled
+            ? kAudioUnitSubType_VoiceProcessingIO
+            : kAudioUnitSubType_RemoteIO
 
-        print(
-            "MISMEETER: realtime sink: \(actualRate) Hz, " +
-            "\(actualDuration * 1000) ms I/O, " +
-            "voiceProcessing=\(input.isVoiceProcessingEnabled)"
-        )
-
-        let sink = AVAudioSinkNode { [weak self] _, frameCount, audioBufferList -> OSStatus in
-            guard let self else { return noErr }
-
-            self.processRealtime(
-                audioBufferList: audioBufferList,
-                frameCount: Int(frameCount),
-                commonFormat: commonFormat,
-                actualIOBufferDuration: actualDuration
+        var description =
+            AudioComponentDescription(
+                componentType:
+                    kAudioUnitType_Output,
+                componentSubType:
+                    subtype,
+                componentManufacturer:
+                    kAudioUnitManufacturer_Apple,
+                componentFlags: 0,
+                componentFlagsMask: 0
             )
 
+        guard let component =
+            AudioComponentFindNext(
+                nil,
+                &description
+            )
+        else {
+            throw MicrophoneEngineError
+                .audioUnitCreation(-1)
+        }
+
+        var unit: AudioUnit?
+
+        var status =
+            AudioComponentInstanceNew(
+                component,
+                &unit
+            )
+
+        guard status == noErr,
+              let unit
+        else {
+            throw MicrophoneEngineError
+                .audioUnitCreation(status)
+        }
+
+        audioUnit = unit
+
+        // Enable input on RemoteIO input bus 1.
+        var enableInput: UInt32 = 1
+
+        status = AudioUnitSetProperty(
+            unit,
+            kAudioOutputUnitProperty_EnableIO,
+            kAudioUnitScope_Input,
+            1,
+            &enableInput,
+            UInt32(
+                MemoryLayout<UInt32>.size
+            )
+        )
+
+        guard status == noErr else {
+            cleanupAudioUnit()
+            throw MicrophoneEngineError
+                .audioUnitConfiguration(status)
+        }
+
+        // No audible output is required from this Audio Unit.
+        // RX playback remains handled by its own AVAudioEngine.
+        var disableOutput: UInt32 = 0
+
+        status = AudioUnitSetProperty(
+            unit,
+            kAudioOutputUnitProperty_EnableIO,
+            kAudioUnitScope_Output,
+            0,
+            &disableOutput,
+            UInt32(
+                MemoryLayout<UInt32>.size
+            )
+        )
+
+        guard status == noErr else {
+            cleanupAudioUnit()
+            throw MicrophoneEngineError
+                .audioUnitConfiguration(status)
+        }
+
+        // We ask RemoteIO to render microphone audio as mono Float32 at 48k.
+        // Format is set on the output scope of input element 1.
+        var format =
+            AudioStreamBasicDescription(
+                mSampleRate:
+                    VBANPacket.sampleRate,
+                mFormatID:
+                    kAudioFormatLinearPCM,
+                mFormatFlags:
+                    kAudioFormatFlagsNativeFloatPacked |
+                    kAudioFormatFlagIsNonInterleaved,
+                mBytesPerPacket:
+                    UInt32(
+                        MemoryLayout<Float>.size
+                    ),
+                mFramesPerPacket: 1,
+                mBytesPerFrame:
+                    UInt32(
+                        MemoryLayout<Float>.size
+                    ),
+                mChannelsPerFrame: 1,
+                mBitsPerChannel: 32,
+                mReserved: 0
+            )
+
+        status = AudioUnitSetProperty(
+            unit,
+            kAudioUnitProperty_StreamFormat,
+            kAudioUnitScope_Output,
+            1,
+            &format,
+            UInt32(
+                MemoryLayout<
+                    AudioStreamBasicDescription
+                >.size
+            )
+        )
+
+        guard status == noErr else {
+            cleanupAudioUnit()
+            throw MicrophoneEngineError
+                .audioUnitConfiguration(status)
+        }
+
+        var callback =
+            AURenderCallbackStruct(
+                inputProc:
+                    microphoneRenderCallback,
+                inputProcRefCon:
+                    Unmanaged.passUnretained(
+                        self
+                    ).toOpaque()
+            )
+
+        status = AudioUnitSetProperty(
+            unit,
+            kAudioOutputUnitProperty_SetInputCallback,
+            kAudioUnitScope_Global,
+            1,
+            &callback,
+            UInt32(
+                MemoryLayout<
+                    AURenderCallbackStruct
+                >.size
+            )
+        )
+
+        guard status == noErr else {
+            cleanupAudioUnit()
+            throw MicrophoneEngineError
+                .audioUnitConfiguration(status)
+        }
+
+        status =
+            AudioUnitInitialize(unit)
+
+        guard status == noErr else {
+            cleanupAudioUnit()
+            throw MicrophoneEngineError
+                .audioUnitConfiguration(status)
+        }
+
+        lastCallbackHostTime = nil
+        maxCallbackGapMS = 0
+        callbackCount = 0
+
+        status =
+            AudioOutputUnitStart(unit)
+
+        guard status == noErr else {
+            cleanupAudioUnit()
+            throw MicrophoneEngineError
+                .audioUnitConfiguration(status)
+        }
+
+        onVoiceProcessingState?(
+            voiceProcessingEnabled
+        )
+
+        // Explicit loudspeaker preference when RX is also active.
+        AudioSessionCoordinator.shared
+            .forceSpeaker()
+
+        print(
+            "MISMEETER: RemoteIO capture started • " +
+            "\(session.sampleRate) Hz • " +
+            "\(session.ioBufferDuration * 1000) ms • " +
+            "voiceProcessing=\(voiceProcessingEnabled)"
+        )
+    }
+
+    func stop(
+        deactivateSession: Bool = true
+    ) {
+        cleanupAudioUnit()
+
+        if deactivateSession {
+            AudioSessionCoordinator.shared
+                .deactivateIfPossible()
+        }
+    }
+
+    fileprivate func handleRender(
+        actionFlags: UnsafeMutablePointer<
+            AudioUnitRenderActionFlags
+        >,
+        timeStamp: UnsafePointer<
+            AudioTimeStamp
+        >,
+        busNumber: UInt32,
+        frameCount: UInt32
+    ) -> OSStatus {
+        guard let unit = audioUnit else {
             return noErr
         }
 
-        sinkNode = sink
-        engine.attach(sink)
-        engine.connect(input, to: sink, format: format)
+        let frames = Int(frameCount)
 
-        if backgroundOutputKeepAlive {
-            // Keep the output side of the hardware I/O graph actively rendering
-            // while TX is running. The samples are exactly zero and this engine's
-            // mixer is muted, so nothing is audible.
-            let outputFormat = AVAudioFormat(
-                standardFormatWithSampleRate: VBANPacket.sampleRate,
-                channels: 2
-            )!
+        if frames <= 0 {
+            return noErr
+        }
 
-            let silence = AVAudioSourceNode(
-                format: outputFormat
-            ) { _, _, frameCount, audioBufferList -> OSStatus in
-                let buffers = UnsafeMutableAudioBufferListPointer(
-                    audioBufferList
-                )
+        if frames > renderBuffer.count {
+            // This should not occur with the requested hardware quantum.
+            // Avoid allocating from the realtime callback.
+            return kAudio_ParamError
+        }
 
-                for buffer in buffers {
-                    if let data = buffer.mData {
-                        memset(
-                            data,
-                            0,
-                            Int(buffer.mDataByteSize)
-                        )
-                    }
-                }
-
-                return noErr
-            }
-
-            keepAliveSourceNode = silence
-            engine.attach(silence)
-            engine.connect(
-                silence,
-                to: engine.mainMixerNode,
-                format: outputFormat
+        var buffer =
+            AudioBuffer(
+                mNumberChannels: 1,
+                mDataByteSize:
+                    UInt32(
+                        frames *
+                        MemoryLayout<Float>.size
+                    ),
+                mData:
+                    &renderBuffer
             )
 
-            // Silence only this engine; the independent RX engine remains audible.
-            engine.mainMixerNode.outputVolume = 0
-        } else {
-            engine.mainMixerNode.outputVolume = 1
+        var list =
+            AudioBufferList(
+                mNumberBuffers: 1,
+                mBuffers: buffer
+            )
+
+        let status =
+            AudioUnitRender(
+                unit,
+                actionFlags,
+                timeStamp,
+                1,
+                frameCount,
+                &list
+            )
+
+        guard status == noErr else {
+            return status
         }
 
-        engine.prepare()
-        try engine.start()
-    }
+        measureCallbackGap(
+            hostTime:
+                timeStamp.pointee.mHostTime
+        )
 
-    func stop(deactivateSession: Bool = true) {
-        engine.stop()
+        let gain =
+            gainLock.withLock { $0 }
 
-        if let sink = sinkNode {
-            engine.disconnectNodeInput(sink)
-            engine.detach(sink)
-            sinkNode = nil
-        }
-
-        if let silence = keepAliveSourceNode {
-            engine.disconnectNodeOutput(silence)
-            engine.detach(silence)
-            keepAliveSourceNode = nil
-        }
-
-        engine.mainMixerNode.outputVolume = 1
-
-        if deactivateSession {
-            do {
-                try AVAudioSession.sharedInstance().setActive(
-                    false,
-                    options: [.notifyOthersOnDeactivation]
-                )
-            } catch {
-                print("MISMEETER: session deactivate error: \(error)")
-            }
-        }
-    }
-
-    private func processRealtime(
-        audioBufferList: UnsafePointer<AudioBufferList>,
-        frameCount: Int,
-        commonFormat: AVAudioCommonFormat,
-        actualIOBufferDuration: Double
-    ) {
-        guard frameCount > 0 else { return }
-
-        // Built-in iPhone microphone is mono in this graph; use the first buffer.
-        let audioBuffer = audioBufferList.pointee.mBuffers
-        guard let data = audioBuffer.mData else { return }
-
-        let currentGainDB = gainDB
-        let linearGain = powf(10, currentGainDB / 20)
+        let linearGain =
+            powf(
+                10,
+                gain / 20
+            )
 
         var output = [Int16]()
-        output.reserveCapacity(frameCount)
+        output.reserveCapacity(frames)
 
         var peak: Float = 0
 
-        switch commonFormat {
-        case .pcmFormatFloat32:
-            let pointer = data.assumingMemoryBound(to: Float.self)
+        renderBuffer
+            .withUnsafeBufferPointer {
+                pointer in
 
-            for index in 0..<frameCount {
-                let raw = pointer[index]
-                peak = max(peak, abs(raw))
+                for index in 0..<frames {
+                    let raw =
+                        pointer[index]
 
-                let limited = tanhf(raw * linearGain)
+                    peak =
+                        max(
+                            peak,
+                            abs(raw)
+                        )
 
-                output.append(
-                    Int16(
-                        max(-1, min(1, limited))
-                        * Float(Int16.max)
+                    let limited =
+                        tanhf(
+                            raw *
+                            linearGain
+                        )
+
+                    output.append(
+                        Int16(
+                            max(
+                                -1,
+                                min(
+                                    1,
+                                    limited
+                                )
+                            ) *
+                            Float(
+                                Int16.max
+                            )
+                        )
                     )
-                )
+                }
             }
 
-        case .pcmFormatInt16:
-            let pointer = data.assumingMemoryBound(to: Int16.self)
+        onMeter?(
+            min(
+                1,
+                peak * linearGain
+            )
+        )
 
-            for index in 0..<frameCount {
-                let raw = Float(pointer[index]) / Float(Int16.max)
-                peak = max(peak, abs(raw))
+        onAudioDiagnostics?(
+            frames,
+            AVAudioSession
+                .sharedInstance()
+                .ioBufferDuration
+        )
 
-                let limited = tanhf(raw * linearGain)
+        transmitter.enqueue(
+            output
+        )
 
-                output.append(
-                    Int16(
-                        max(-1, min(1, limited))
-                        * Float(Int16.max)
-                    )
-                )
-            }
+        callbackCount &+= 1
 
-        default:
+        return noErr
+    }
+
+    private func measureCallbackGap(
+        hostTime: UInt64
+    ) {
+        guard hostTime != 0 else {
             return
         }
 
-        onMeter?(min(1, peak * linearGain))
-        onAudioDiagnostics?(frameCount, actualIOBufferDuration)
+        if let previous =
+            lastCallbackHostTime {
+            let delta =
+                hostTime - previous
 
-        // The sink callback itself supplies the realtime cadence.
-        // Network work stays on VBANTransmitter's serial queue.
-        transmitter.enqueue(output)
+            let seconds =
+                AVAudioTime.seconds(
+                    forHostTime: delta
+                )
+
+            let gapMS =
+                seconds * 1000
+
+            maxCallbackGapMS =
+                max(
+                    maxCallbackGapMS,
+                    gapMS
+                )
+
+            if callbackCount % 64 == 0 {
+                onCaptureGap?(
+                    maxCallbackGapMS
+                )
+            }
+        }
+
+        lastCallbackHostTime =
+            hostTime
+    }
+
+    private func cleanupAudioUnit() {
+        guard let unit =
+            audioUnit
+        else {
+            return
+        }
+
+        _ = AudioOutputUnitStop(unit)
+        _ = AudioUnitUninitialize(unit)
+        AudioComponentInstanceDispose(unit)
+
+        audioUnit = nil
     }
 }
+
+private let microphoneRenderCallback:
+    AURenderCallback = {
+        refCon,
+        actionFlags,
+        timeStamp,
+        busNumber,
+        frameCount,
+        _ in
+
+        let engine =
+            Unmanaged<
+                MicrophoneEngine
+            >
+            .fromOpaque(refCon)
+            .takeUnretainedValue()
+
+        return engine.handleRender(
+            actionFlags: actionFlags,
+            timeStamp: timeStamp,
+            busNumber: busNumber,
+            frameCount: frameCount
+        )
+    }

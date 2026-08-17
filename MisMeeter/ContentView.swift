@@ -98,6 +98,7 @@ struct ContentView: View {
     @State private var measuredCaptureHz = 48_000.0
     @State private var effectiveTXHz = 48_000.0
     @State private var maxSendGapMS = 0.0
+    @State private var maxCaptureGapMS = 0.0
 
     // ---------------- RX state ----------------
 
@@ -179,14 +180,13 @@ struct ContentView: View {
             .disabled(isStreaming)
 
             Toggle(
-                "Lock-screen TX stabilizer",
+                "RemoteIO lock-screen mode",
                 isOn: $backgroundOutputKeepAlive
             )
             .disabled(isStreaming)
 
             Text(
-                "Keeps a silent output render path active while the microphone is streaming. " +
-                "It may use more battery, but is intended to reduce Wi-Fi/network jitter after locking the iPhone."
+                "Uses the low-level RemoteIO microphone capture path. This replaces AVAudioSinkNode and exposes the actual microphone callback gap while the phone is locked."
             )
             .font(.caption)
             .foregroundStyle(.secondary)
@@ -587,12 +587,22 @@ struct ContentView: View {
                 )
 
                 LabeledContent(
-                    "TX max gap",
+                    "TX network max gap",
                     value:
                         String(
                             format:
                                 "%.2f ms",
                             maxSendGapMS
+                        )
+                )
+
+                LabeledContent(
+                    "Mic callback max gap",
+                    value:
+                        String(
+                            format:
+                                "%.2f ms",
+                            maxCaptureGapMS
                         )
                 )
 
@@ -889,6 +899,16 @@ struct ContentView: View {
                         frames
                     actualIOBufferMS =
                         duration * 1000
+                }
+            }
+
+        MisMeeterRuntime.shared
+            .onCaptureGap = {
+                gapMS in
+
+                DispatchQueue.main.async {
+                    maxCaptureGapMS =
+                        gapMS
                 }
             }
 

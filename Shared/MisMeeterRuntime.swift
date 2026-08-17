@@ -26,6 +26,7 @@ final class MisMeeterRuntime {
     var onMeter: ((Float) -> Void)?
     var onBufferLevel: ((Int) -> Void)?
     var onAudioDiagnostics: ((Int, Double) -> Void)?
+    var onCaptureGap: ((Double) -> Void)?
     var onUnderruns: ((UInt64) -> Void)?
     var onPacketsSent: ((UInt64) -> Void)?
     var onPrimedChange: ((Bool) -> Void)?
@@ -47,6 +48,10 @@ final class MisMeeterRuntime {
 
         microphone.onAudioDiagnostics = { [weak self] frames, duration in
             self?.onAudioDiagnostics?(frames, duration)
+        }
+
+        microphone.onCaptureGap = { [weak self] gapMS in
+            self?.onCaptureGap?(gapMS)
         }
 
         microphone.onVoiceProcessingState = { [weak self] enabled in
@@ -152,6 +157,11 @@ final class MisMeeterRuntime {
 
         stateQueue.sync {
             _isStreaming = true
+        }
+
+        if isReceiving {
+            AudioSessionCoordinator.shared
+                .forceSpeaker()
         }
 
         await updateOrStartLiveActivity()

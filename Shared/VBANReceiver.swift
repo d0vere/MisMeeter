@@ -94,25 +94,13 @@ final class VBANReceiver {
         )
 
         if !transmitterAlreadyActive {
-            let session =
-                AVAudioSession.sharedInstance()
-
-            try session.setCategory(
-                .playAndRecord,
-                mode: .default,
-                options: [.defaultToSpeaker]
-            )
-
-            try session.setPreferredSampleRate(
-                VBANPacket.sampleRate
-            )
-
-            try session
-                .setPreferredIOBufferDuration(
-                    VBANPacket.packetDurationSeconds
+            try AudioSessionCoordinator.shared
+                .configureForDuplex(
+                    voiceProcessing: false
                 )
-
-            try session.setActive(true)
+        } else {
+            AudioSessionCoordinator.shared
+                .forceSpeaker()
         }
 
         guard let format = AVAudioFormat(
@@ -199,6 +187,9 @@ final class VBANReceiver {
         engine.prepare()
         try engine.start()
 
+        AudioSessionCoordinator.shared
+            .forceSpeaker()
+
         do {
             try openSocket()
         } catch {
@@ -267,19 +258,8 @@ final class VBANReceiver {
         )
 
         if deactivateSession {
-            do {
-                try AVAudioSession
-                    .sharedInstance()
-                    .setActive(
-                        false,
-                        options:
-                            [.notifyOthersOnDeactivation]
-                    )
-            } catch {
-                print(
-                    "MISMEETER RX: session deactivate error \(error)"
-                )
-            }
+            AudioSessionCoordinator.shared
+                .deactivateIfPossible()
         }
 
         onStatus?("Receiver stopped")

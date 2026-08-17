@@ -106,3 +106,28 @@ of the `playAndRecord` hardware I/O graph rendering while the iPhone is locked, 
 the direct nonblocking UDP sender.
 
 This can consume more battery. It can be disabled from the app when TX is stopped.
+
+
+## v1.6 RemoteIO Capture
+
+The receiver path from v1.5 is retained unchanged because on-device testing showed it is stable both
+foreground and locked.
+
+### Microphone TX
+AVAudioSinkNode has been replaced by the lower-level Apple RemoteIO Audio Unit:
+- RemoteIO when Apple Voice Processing is OFF
+- VoiceProcessingIO when Apple Voice Processing is ON
+- input bus 1 enabled
+- mono Float32 48 kHz rendered directly with AudioUnitRender
+- VBAN sender remains direct nonblocking UDP
+
+New diagnostic:
+- `Mic callback max gap`
+
+This is specifically intended to distinguish a true microphone/capture scheduling interruption from
+a network-send interruption when the screen locks.
+
+### Speaker routing
+A shared AudioSessionCoordinator configures `.playAndRecord + .defaultToSpeaker` and explicitly calls
+`overrideOutputAudioPort(.speaker)` when TX/RX are started. This prevents simultaneous RX+TX from
+falling back to the iPhone telephone receiver.

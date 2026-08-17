@@ -170,6 +170,27 @@ final class PlaybackRingBuffer {
         }
     }
 
+
+    func setTargetFrames(_ frames: Int) {
+        lock.withLock { state in
+            state.targetFrames = max(
+                256,
+                min(capacityFrames / 2, frames)
+            )
+
+            if !state.primed &&
+                state.countFrames >= state.targetFrames {
+                state.primed = true
+            }
+        }
+    }
+
+    func targetFrames() -> Int {
+        lock.withLock { state in
+            state.targetFrames
+        }
+    }
+
     func stats() -> Stats {
         lock.withLock { state in
             Stats(

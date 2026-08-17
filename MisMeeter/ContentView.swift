@@ -107,6 +107,8 @@ struct ContentView: View {
     @State private var rxBufferedFrames = 0
     @State private var rxUnderflows: UInt64 = 0
     @State private var rxPrimed = false
+    @State private var rxPlaybackRate: Float = 1.0
+    @State private var rxAdaptiveTargetMS = 100.0
 
     var body: some View {
         NavigationStack {
@@ -420,6 +422,26 @@ struct ContentView: View {
                 LabeledContent(
                     "Playback underflows",
                     value: "\(rxUnderflows)"
+                )
+
+                LabeledContent(
+                    "Clock correction",
+                    value:
+                        String(
+                            format:
+                                "%.4fx",
+                            rxPlaybackRate
+                        )
+                )
+
+                LabeledContent(
+                    "Adaptive target",
+                    value:
+                        String(
+                            format:
+                                "%.0f ms",
+                            rxAdaptiveTargetMS
+                        )
                 )
             }
 
@@ -784,6 +806,9 @@ struct ContentView: View {
         rxStatus = "RX stopped"
         rxBufferedFrames = 0
         rxPrimed = false
+        rxPlaybackRate = 1.0
+        rxAdaptiveTargetMS =
+            currentRXPreset.bufferMS
     }
 
     private func requestMicrophonePermission()
@@ -904,7 +929,9 @@ struct ContentView: View {
                 lost,
                 buffered,
                 underflows,
-                primed in
+                primed,
+                rate,
+                targetMS in
 
                 DispatchQueue.main.async {
                     rxPackets = received
@@ -915,6 +942,9 @@ struct ContentView: View {
                     rxUnderflows =
                         underflows
                     rxPrimed = primed
+                    rxPlaybackRate = rate
+                    rxAdaptiveTargetMS =
+                        targetMS
                 }
             }
     }

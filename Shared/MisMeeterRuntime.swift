@@ -32,7 +32,7 @@ final class MisMeeterRuntime {
     var onPLLStats: ((Double, Double, Double, Double, UInt64) -> Void)?
     var onVoiceProcessingState: ((Bool) -> Void)?
     var onReceiverStatus: ((String) -> Void)?
-    var onReceiverDiagnostics: ((UInt64, UInt64, UInt64, Int, UInt64, Bool) -> Void)?
+    var onReceiverDiagnostics: ((UInt64, UInt64, UInt64, Int, UInt64, Bool, Float, Double) -> Void)?
     var onTransportMode: ((TransportState, Int, Int, Double) -> Void)?
 
     private init() {
@@ -84,14 +84,16 @@ final class MisMeeterRuntime {
             self?.onReceiverStatus?(value)
         }
 
-        receiver.onDiagnostics = { [weak self] received, rejected, lost, buffered, underflows, primed in
+        receiver.onDiagnostics = { [weak self] received, rejected, lost, buffered, underflows, primed, rate, targetMS in
             self?.onReceiverDiagnostics?(
                 received,
                 rejected,
                 lost,
                 buffered,
                 underflows,
-                primed
+                primed,
+                rate,
+                targetMS
             )
         }
     }

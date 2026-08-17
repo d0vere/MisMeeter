@@ -68,3 +68,22 @@ not deactivate it while TX is still active.
 
 - Fixed Swift exclusivity error in `VBANReceiver.drainSocket()` by caching packet capacity before `withUnsafeMutableBytes`.
 - Removed Swift 6 `UnsafeMutablePointer` Sendable warnings from `PlaybackRingBuffer.render()` by keeping caller output pointers outside the lock closure.
+
+
+## v1.4 RX Smooth
+
+The VBAN -> iPhone receiver now performs clock recovery.
+
+The PC sender clock and iPhone speaker clock are never exactly identical. A fixed jitter buffer can
+therefore slowly drain or fill even when the network has zero packet loss.
+
+v1.4 inserts AVAudioUnitVarispeed between the receiver source and the iPhone output and automatically
+adjusts playback between 0.995x and 1.005x according to ring-buffer occupancy.
+
+It also uses an adaptive jitter target:
+- underflow: +20 ms immediately, up to 300 ms
+- 15 seconds stable: -10 ms toward the preset's configured buffer
+
+New RX diagnostics:
+- Clock correction
+- Adaptive target

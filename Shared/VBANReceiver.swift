@@ -25,26 +25,50 @@ final class VBANReceiver {
         qos: .userInteractive
     )
 
+    private let controlQueue = DispatchQueue(
+        label: "dev.mismeeter.vban.rx.control",
+        qos: .userInitiated
+    )
+
     private let engine = AVAudioEngine()
     private var sourceNode: AVAudioSourceNode?
+    private var varispeed: AVAudioUnitVarispeed?
+
     private let ring = PlaybackRingBuffer()
 
     private var socketFD: Int32 = -1
     private var readSource: DispatchSourceRead?
+    private var controlTimer: DispatchSourceTimer?
 
     private var expectedStreamName = "MisMeeterRX"
     private var listenPort: UInt16 = 6980
+
+    private var configuredBufferMS: Double = 100
+    private var adaptiveTargetMS: Double = 100
 
     private var packetsReceived: UInt64 = 0
     private var packetsRejected: UInt64 = 0
     private var lastFrameCounter: UInt32?
     private var lostFrames: UInt64 = 0
 
+    private var lastUnderflowCount: UInt64 = 0
+    private var stableControlWindows = 0
+    private var currentRate: Float = 1.0
+
     private(set) var isRunning = false
 
     var onStatus: ((String) -> Void)?
+
+    /// received, rejected, lost, bufferedFrames, underflows, primed, playbackRate, targetMS
     var onDiagnostics: ((
-        UInt64, UInt64, UInt64, Int, UInt64, Bool
+        UInt64,
+        UInt64,
+        UInt64,
+        Int,
+        UInt64,
+        Bool,
+        Float,
+        Double
     ) -> Void)?
 
     func start(
@@ -55,20 +79,23 @@ final class VBANReceiver {
 
         expectedStreamName =
             preset.sanitizedStreamName
+
         listenPort = preset.port
 
-        let targetFrames = Int(
-            VBANPacket.sampleRate *
-            preset.bufferMS /
-            1000.0
+        configuredBufferMS =
+            max(40, min(300, preset.bufferMS))
+
+        adaptiveTargetMS =
+            configuredBufferMS
+
+        ring.reset(
+            targetFrames:
+                frames(forMS: adaptiveTargetMS)
         )
 
-        ring.reset(targetFrames: targetFrames)
-
-        // Audio session is app-wide. If TX is already active its MicrophoneEngine
-        // has configured playAndRecord. Otherwise prepare playback ourselves.
         if !transmitterAlreadyActive {
-            let session = AVAudioSession.sharedInstance()
+            let session =
+                AVAudioSession.sharedInstance()
 
             try session.setCategory(
                 .playAndRecord,
@@ -80,9 +107,10 @@ final class VBANReceiver {
                 VBANPacket.sampleRate
             )
 
-            try session.setPreferredIOBufferDuration(
-                VBANPacket.packetDurationSeconds
-            )
+            try session
+                .setPreferredIOBufferDuration(
+                    VBANPacket.packetDurationSeconds
+                )
 
             try session.setActive(true)
         }
@@ -108,8 +136,10 @@ final class VBANReceiver {
                 )
 
             guard buffers.count >= 2,
-                  let leftData = buffers[0].mData,
-                  let rightData = buffers[1].mData
+                  let leftData =
+                    buffers[0].mData,
+                  let rightData =
+                    buffers[1].mData
             else {
                 for buffer in buffers {
                     if let data = buffer.mData {
@@ -120,16 +150,19 @@ final class VBANReceiver {
                         )
                     }
                 }
+
                 return noErr
             }
 
-            let left = leftData.assumingMemoryBound(
-                to: Float.self
-            )
+            let left =
+                leftData.assumingMemoryBound(
+                    to: Float.self
+                )
 
-            let right = rightData.assumingMemoryBound(
-                to: Float.self
-            )
+            let right =
+                rightData.assumingMemoryBound(
+                    to: Float.self
+                )
 
             self.ring.render(
                 frameCount: Int(frameCount),
@@ -140,10 +173,23 @@ final class VBANReceiver {
             return noErr
         }
 
+        let speed = AVAudioUnitVarispeed()
+        speed.rate = 1.0
+
         sourceNode = node
+        varispeed = speed
+
         engine.attach(node)
+        engine.attach(speed)
+
         engine.connect(
             node,
+            to: speed,
+            format: format
+        )
+
+        engine.connect(
+            speed,
             to: engine.mainMixerNode,
             format: format
         )
@@ -156,11 +202,24 @@ final class VBANReceiver {
         } catch {
             engine.stop()
             engine.detach(node)
+            engine.detach(speed)
             sourceNode = nil
+            varispeed = nil
             throw error
         }
 
+        packetsReceived = 0
+        packetsRejected = 0
+        lastFrameCounter = nil
+        lostFrames = 0
+        lastUnderflowCount = 0
+        stableControlWindows = 0
+        currentRate = 1.0
+
         isRunning = true
+
+        startClockRecovery()
+
         onStatus?(
             "Listening • \(expectedStreamName) • UDP \(listenPort)"
         )
@@ -170,6 +229,10 @@ final class VBANReceiver {
         deactivateSession: Bool
     ) {
         isRunning = false
+
+        controlTimer?.setEventHandler {}
+        controlTimer?.cancel()
+        controlTimer = nil
 
         if let source = readSource {
             source.setEventHandler {}
@@ -190,14 +253,25 @@ final class VBANReceiver {
             sourceNode = nil
         }
 
-        ring.reset(targetFrames: 4_800)
+        if let speed = varispeed {
+            engine.disconnectNodeOutput(speed)
+            engine.detach(speed)
+            varispeed = nil
+        }
+
+        ring.reset(
+            targetFrames:
+                frames(forMS: 100)
+        )
 
         if deactivateSession {
             do {
-                try AVAudioSession.sharedInstance()
+                try AVAudioSession
+                    .sharedInstance()
                     .setActive(
                         false,
-                        options: [.notifyOthersOnDeactivation]
+                        options:
+                            [.notifyOthersOnDeactivation]
                     )
             } catch {
                 print(
@@ -209,6 +283,133 @@ final class VBANReceiver {
         onStatus?("Receiver stopped")
     }
 
+    private func startClockRecovery() {
+        controlTimer?.cancel()
+
+        let timer =
+            DispatchSource.makeTimerSource(
+                queue: controlQueue
+            )
+
+        timer.schedule(
+            deadline: .now() + 0.5,
+            repeating: .milliseconds(500),
+            leeway: .milliseconds(20)
+        )
+
+        timer.setEventHandler { [weak self] in
+            self?.updateClockRecovery()
+        }
+
+        controlTimer = timer
+        timer.resume()
+    }
+
+    /// VBAN sender and iPhone hardware have independent clocks.
+    /// Keep the jitter buffer centered by changing playback speed by
+    /// at most +/- 0.5%. This is small enough to be practically inaudible
+    /// but prevents the buffer slowly drifting into underflow/overflow.
+    private func updateClockRecovery() {
+        guard isRunning else { return }
+
+        let stats = ring.stats()
+
+        let targetFrames =
+            max(
+                256,
+                ring.targetFrames()
+            )
+
+        let error =
+            Double(
+                stats.bufferedFrames -
+                targetFrames
+            ) /
+            Double(targetFrames)
+
+        let desiredRate =
+            Float(
+                max(
+                    0.995,
+                    min(
+                        1.005,
+                        1.0 + error * 0.003
+                    )
+                )
+            )
+
+        currentRate =
+            currentRate * 0.90 +
+            desiredRate * 0.10
+
+        DispatchQueue.main.async { [weak self] in
+            self?.varispeed?.rate =
+                self?.currentRate ?? 1.0
+        }
+
+        let hadNewUnderflow =
+            stats.underflows !=
+            lastUnderflowCount
+
+        if hadNewUnderflow {
+            // Add 20 ms of safety quickly after an underflow.
+            adaptiveTargetMS =
+                min(
+                    300,
+                    adaptiveTargetMS + 20
+                )
+
+            ring.setTargetFrames(
+                frames(
+                    forMS:
+                        adaptiveTargetMS
+                )
+            )
+
+            stableControlWindows = 0
+        } else if stats.primed {
+            stableControlWindows += 1
+
+            // After 15 s without underflow, slowly move back toward
+            // the user's configured buffer.
+            if stableControlWindows >= 30 &&
+                adaptiveTargetMS >
+                    configuredBufferMS {
+                adaptiveTargetMS =
+                    max(
+                        configuredBufferMS,
+                        adaptiveTargetMS - 10
+                    )
+
+                ring.setTargetFrames(
+                    frames(
+                        forMS:
+                            adaptiveTargetMS
+                    )
+                )
+
+                stableControlWindows = 0
+            }
+        } else {
+            stableControlWindows = 0
+        }
+
+        lastUnderflowCount =
+            stats.underflows
+
+        publishDiagnostics()
+    }
+
+    private func frames(
+        forMS ms: Double
+    ) -> Int {
+        Int(
+            VBANPacket.sampleRate *
+            ms /
+            1000.0
+        )
+    }
+
     private func openSocket() throws {
         let fd = Darwin.socket(
             AF_INET,
@@ -217,11 +418,15 @@ final class VBANReceiver {
         )
 
         guard fd >= 0 else {
-            throw VBANReceiverError.socketCreation
+            throw VBANReceiverError
+                .socketCreation
         }
 
         var reuse: Int32 = 1
-        _ = withUnsafePointer(to: &reuse) {
+
+        _ = withUnsafePointer(
+            to: &reuse
+        ) {
             setsockopt(
                 fd,
                 SOL_SOCKET,
@@ -234,7 +439,7 @@ final class VBANReceiver {
         }
 
         var receiveBuffer: Int32 =
-            1_048_576
+            2_097_152
 
         _ = withUnsafePointer(
             to: &receiveBuffer
@@ -250,11 +455,12 @@ final class VBANReceiver {
             )
         }
 
-        let flags = fcntl(
-            fd,
-            F_GETFL,
-            0
-        )
+        let flags =
+            fcntl(
+                fd,
+                F_GETFL,
+                0
+            )
 
         _ = fcntl(
             fd,
@@ -262,19 +468,28 @@ final class VBANReceiver {
             flags | O_NONBLOCK
         )
 
-        var address = sockaddr_in()
+        var address =
+            sockaddr_in()
+
         address.sin_len =
             UInt8(
-                MemoryLayout<sockaddr_in>.size
+                MemoryLayout<
+                    sockaddr_in
+                >.size
             )
+
         address.sin_family =
             sa_family_t(AF_INET)
+
         address.sin_port =
             listenPort.bigEndian
-        address.sin_addr =
-            in_addr(s_addr: INADDR_ANY)
 
-        let bindResult: Int32 =
+        address.sin_addr =
+            in_addr(
+                s_addr: INADDR_ANY
+            )
+
+        let result: Int32 =
             withUnsafePointer(
                 to: &address
             ) { pointer in
@@ -294,10 +509,13 @@ final class VBANReceiver {
                 }
             }
 
-        guard bindResult == 0 else {
+        guard result == 0 else {
             Darwin.close(fd)
+
             throw VBANReceiverError
-                .bindFailed(listenPort)
+                .bindFailed(
+                    listenPort
+                )
         }
 
         socketFD = fd
@@ -308,7 +526,8 @@ final class VBANReceiver {
                 queue: networkQueue
             )
 
-        source.setEventHandler { [weak self] in
+        source.setEventHandler {
+            [weak self] in
             self?.drainSocket()
         }
 
@@ -324,19 +543,27 @@ final class VBANReceiver {
         }
 
         var packet =
-            [UInt8](repeating: 0, count: 2048)
+            [UInt8](
+                repeating: 0,
+                count: 2048
+            )
 
-        let packetCapacity = packet.count
+        let capacity =
+            packet.count
 
         while true {
-            let count = packet.withUnsafeMutableBytes { rawBuffer in
-                Darwin.recv(
-                    socketFD,
-                    rawBuffer.baseAddress,
-                    packetCapacity,
-                    0
-                )
-            }
+            let count =
+                packet
+                    .withUnsafeMutableBytes {
+                        buffer in
+
+                        Darwin.recv(
+                            socketFD,
+                            buffer.baseAddress,
+                            capacity,
+                            0
+                        )
+                    }
 
             if count <= 0 {
                 if errno == EAGAIN ||
@@ -360,14 +587,14 @@ final class VBANReceiver {
     ) {
         guard count >= 28 else {
             packetsRejected &+= 1
-            publishDiagnostics()
             return
         }
 
-        guard bytes[0] == 0x56,
-              bytes[1] == 0x42,
-              bytes[2] == 0x41,
-              bytes[3] == 0x4E
+        guard
+            bytes[0] == 0x56,
+            bytes[1] == 0x42,
+            bytes[2] == 0x41,
+            bytes[3] == 0x4E
         else {
             packetsRejected &+= 1
             return
@@ -385,34 +612,35 @@ final class VBANReceiver {
         let dataType =
             bytes[7] & 0x07
 
-        guard sampleRateIndex ==
+        guard
+            sampleRateIndex ==
                 VBANPacket.sampleRateIndex,
-              dataType == 1,
-              channels == 1 ||
+            dataType == 1,
+            channels == 1 ||
                 channels == 2,
-              sampleCount > 0 &&
+            sampleCount > 0 &&
                 sampleCount <= 256
         else {
             packetsRejected &+= 1
-            publishDiagnostics()
             return
         }
 
         let nameBytes =
             bytes[8..<24]
 
-        let streamName = String(
-            bytes:
-                nameBytes.prefix {
-                    $0 != 0
-                },
-            encoding: .ascii
-        ) ?? ""
+        let streamName =
+            String(
+                bytes:
+                    nameBytes.prefix {
+                        $0 != 0
+                    },
+                encoding: .ascii
+            ) ?? ""
 
-        guard streamName ==
+        guard
+            streamName ==
                 expectedStreamName
         else {
-            // Different stream on same UDP port.
             return
         }
 
@@ -421,11 +649,11 @@ final class VBANReceiver {
             channels *
             2
 
-        guard count >=
+        guard
+            count >=
                 28 + payloadBytes
         else {
             packetsRejected &+= 1
-            publishDiagnostics()
             return
         }
 
@@ -435,14 +663,15 @@ final class VBANReceiver {
             UInt32(bytes[26]) << 16 |
             UInt32(bytes[27]) << 24
 
-        if let previous = lastFrameCounter {
-            let expected = previous &+ 1
+        if let previous =
+            lastFrameCounter {
+            let expected =
+                previous &+ 1
 
             if frame != expected {
                 let delta =
                     frame &- expected
 
-                // Ignore massive wrap/restart values.
                 if delta < 10_000 {
                     lostFrames &+=
                         UInt64(delta)
@@ -452,14 +681,13 @@ final class VBANReceiver {
 
         lastFrameCounter = frame
 
-        var left =
-            [Float]()
-        var right =
-            [Float]()
+        var left = [Float]()
+        var right = [Float]()
 
         left.reserveCapacity(
             sampleCount
         )
+
         right.reserveCapacity(
             sampleCount
         )
@@ -467,46 +695,52 @@ final class VBANReceiver {
         var offset = 28
 
         for _ in 0..<sampleCount {
-            let l = Int16(
-                bitPattern:
-                    UInt16(bytes[offset]) |
-                    UInt16(
-                        bytes[offset + 1]
-                    ) << 8
-            )
+            let l =
+                Int16(
+                    bitPattern:
+                        UInt16(
+                            bytes[offset]
+                        ) |
+                        UInt16(
+                            bytes[
+                                offset + 1
+                            ]
+                        ) << 8
+                )
 
             offset += 2
 
-            let leftValue =
+            let lv =
                 Float(l) /
                 Float(Int16.max)
 
             if channels == 2 {
-                let r = Int16(
-                    bitPattern:
-                        UInt16(bytes[offset]) |
-                        UInt16(
-                            bytes[offset + 1]
-                        ) << 8
-                )
+                let r =
+                    Int16(
+                        bitPattern:
+                            UInt16(
+                                bytes[
+                                    offset
+                                ]
+                            ) |
+                            UInt16(
+                                bytes[
+                                    offset + 1
+                                ]
+                            ) << 8
+                    )
 
                 offset += 2
 
-                left.append(
-                    leftValue
-                )
+                left.append(lv)
 
                 right.append(
                     Float(r) /
                     Float(Int16.max)
                 )
             } else {
-                left.append(
-                    leftValue
-                )
-                right.append(
-                    leftValue
-                )
+                left.append(lv)
+                right.append(lv)
             }
         }
 
@@ -516,16 +750,15 @@ final class VBANReceiver {
         )
 
         packetsReceived &+= 1
-        publishDiagnostics()
+
+        if packetsReceived % 64 == 0 {
+            publishDiagnostics()
+        }
     }
 
     private func publishDiagnostics() {
-        if packetsReceived % 32 != 0 &&
-            packetsRejected % 32 != 0 {
-            return
-        }
-
-        let stats = ring.stats()
+        let stats =
+            ring.stats()
 
         onDiagnostics?(
             packetsReceived,
@@ -533,7 +766,9 @@ final class VBANReceiver {
             lostFrames,
             stats.bufferedFrames,
             stats.underflows,
-            stats.primed
+            stats.primed,
+            currentRate,
+            adaptiveTargetMS
         )
     }
 }

@@ -1,4 +1,4 @@
-# MisMeeter 3.2.6 — iOS 18.5 UI / Duplex Live Activity
+# MisMeeter 3.2.7 — iOS 18.5 UI / Duplex Live Activity
 
 - Deployment target moved to iOS 18.5; custom cards/navigation use an iOS 18.5-compatible ultra-thin Material treatment.
 - Dynamic Island compact mode is symmetric: RX speaker at compact-leading, TX microphone at compact-trailing. Red indicates that channel is muted, green indicates active audio.
@@ -98,3 +98,11 @@ A full iOS SDK semantic build cannot run in this Linux environment. GitHub Actio
 - Home Screen widget uses one status row: `RX - preset   TX - preset`, with RX/TX icons grouped at the far right.
 - Three transport controls remain on the bottom row; RX/TX buttons continue to reflect green active / red muted state, Stop All remains red.
 - Build baseline remains Xcode 16.4 + iOS 18.5.
+
+
+## 3.2.7 Island RX ordering / Widget forced single-row
+- Expanded Dynamic Island RX now renders `preset -> speaker`, with the speaker at the inner edge next to the physical island.
+- TX remains `microphone -> preset`.
+- Home Screen small/medium widgets use one HStack only: `RX - preset`, `TX - preset`, then RX/TX icons at the far right.
+- Accessory rectangular widget now follows the same one-row information grammar instead of stacking RX/TX.
+- Version bumped to 3.2.7 (build 39).

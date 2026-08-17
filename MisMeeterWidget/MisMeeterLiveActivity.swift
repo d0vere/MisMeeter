@@ -15,17 +15,21 @@ struct MisMeeterLiveActivity: Widget {
                 // RX is kept on the left and TX on the right, with the preset labels growing
                 // outward from their indicators instead of putting content over the camera.
                 DynamicIslandExpandedRegion(.leading) {
+                    // RX: preset label first, speaker immediately to its right.
+                    // The whole cluster is anchored to the inner edge of the leading region,
+                    // so the speaker stays next to the physical island instead of drifting outward.
                     HStack(spacing: 4) {
+                        Text(context.state.receivePresetLabel)
+                            .font(.caption2.weight(.semibold))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.62)
+                            .allowsTightening(true)
+
                         if context.state.isReceiving {
                             receiveIndicator(context.state)
                                 .fixedSize()
                                 .accessibilityLabel(context.state.isReceiveMuted ? "Receive audio muted" : "Receive audio active")
                         }
-                        Text(context.state.receivePresetLabel)
-                            .font(.caption2.weight(.semibold))
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.68)
-                            .allowsTightening(true)
                     }
                     .frame(maxWidth: .infinity, alignment: .trailing)
                 }

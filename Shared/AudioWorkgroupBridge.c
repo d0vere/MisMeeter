@@ -4,6 +4,7 @@
 #include <pthread.h>
 
 typedef struct {
+    os_workgroup_t workgroup;
     os_workgroup_join_token_s token;
     int joined;
 } MisMeeterWGToken;
@@ -60,8 +61,10 @@ void *MisMeeterJoinAudioUnitWorkgroup(void *audioUnitPtr) {
         0
     );
 
+    holder->workgroup = workgroup;
+
     int result = os_workgroup_join(
-        workgroup,
+        holder->workgroup,
         &holder->token
     );
 
@@ -84,6 +87,7 @@ void MisMeeterLeaveAudioUnitWorkgroup(void *tokenPtr) {
 
     if (holder->joined) {
         os_workgroup_leave(
+            holder->workgroup,
             &holder->token
         );
         holder->joined = 0;

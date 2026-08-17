@@ -239,3 +239,10 @@ New diagnostic:
 
 The previous "TX catch-up packets" diagnostic is now "TX stale packets dropped".
 Receiver remains unchanged.
+
+## v2.1.1 build fix
+
+Fixes the Audio Workgroup C bridge for the iOS 18.5 SDK:
+`os_workgroup_leave` takes both the workgroup and the join token.
+The bridge now retains the workgroup in the token holder and passes both
+arguments when leaving.

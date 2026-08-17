@@ -5,6 +5,7 @@ struct ToggleMuteIntent: LiveActivityIntent {
     static var title: LocalizedStringResource = "Toggle Microphone"
     static var description = IntentDescription("Mute or unmute the active MisMeeter microphone transmission.")
     static var openAppWhenRun: Bool = false
+    static var authenticationPolicy: IntentAuthenticationPolicy = .alwaysAllowed
 
     func perform() async throws -> some IntentResult {
         var snapshot = SharedAppState.readSnapshot()

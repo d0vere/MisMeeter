@@ -5,6 +5,7 @@ struct EndLiveActivityIntent: LiveActivityIntent {
     static var title: LocalizedStringResource = "Stop All"
     static var description = IntentDescription("Stops both MisMeeter transmission and reception and closes the Live Activity.")
     static var openAppWhenRun: Bool = false
+    static var authenticationPolicy: IntentAuthenticationPolicy = .alwaysAllowed
 
     func perform() async throws -> some IntentResult {
         SharedAppState.writeSnapshot(.idle)

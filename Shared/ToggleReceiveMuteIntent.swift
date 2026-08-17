@@ -5,6 +5,7 @@ struct ToggleReceiveMuteIntent: LiveActivityIntent {
     static var title: LocalizedStringResource = "Toggle Receive Audio"
     static var description = IntentDescription("Mute or unmute MisMeeter receive playback while keeping the receiver synchronized.")
     static var openAppWhenRun: Bool = false
+    static var authenticationPolicy: IntentAuthenticationPolicy = .alwaysAllowed
 
     func perform() async throws -> some IntentResult {
         var snapshot = SharedAppState.readSnapshot()

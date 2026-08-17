@@ -1,5 +1,5 @@
-import AppIntents
 import SwiftUI
+import AppIntents
 import WidgetKit
 
 private struct MisMeeterEntry: TimelineEntry {
@@ -44,7 +44,7 @@ struct MisMeeterStatusWidget: Widget {
         StaticConfiguration(kind: kind, provider: MisMeeterProvider()) { entry in
             MisMeeterWidgetView(entry: entry)
                 .containerBackground(for: .widget) {
-                    WidgetSurface()
+                    Color(uiColor: .secondarySystemBackground)
                 }
         }
         .configurationDisplayName("MisMeeter Dashboard")
@@ -66,126 +66,90 @@ private struct MisMeeterWidgetView: View {
         case .accessoryRectangular:
             accessoryRectangular
         case .systemMedium:
-            dashboard(compact: false)
+            medium
         default:
-            dashboard(compact: true)
+            small
         }
     }
 
-    private func dashboard(compact: Bool) -> some View {
-        VStack(alignment: .leading, spacing: compact ? 8 : 10) {
-            HStack(spacing: 7) {
-                Image(systemName: "waveform")
-                    .font(.caption.weight(.bold))
-                    .symbolRenderingMode(.hierarchical)
-                    .foregroundStyle(.primary)
+    // MARK: - Home Screen small
 
-                Text("MISMEETER")
-                    .font(.caption2.weight(.bold))
-                    .tracking(0.8)
-                    .foregroundStyle(.secondary)
+    private var small: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            widgetHeader(compact: true)
 
-                Spacer(minLength: 4)
+            VStack(spacing: 7) {
+                compactTransportRow(
+                    title: "RX",
+                    preset: entry.state.receivePresetName,
+                    systemImage: entry.state.isReceiveMuted ? "speaker.slash.fill" : "speaker.wave.2.fill",
+                    active: entry.state.isReceiving,
+                    muted: entry.state.isReceiveMuted
+                )
 
-                HStack(spacing: 5) {
-                    Circle()
-                        .fill(isActive ? Color.green : Color.secondary.opacity(0.45))
-                        .frame(width: 6, height: 6)
-                    Text(isActive ? entry.state.status.uppercased() : "READY")
-                        .font(.system(size: 9, weight: .bold, design: .rounded))
-                        .lineLimit(1)
-                }
-                .foregroundStyle(isActive ? .primary : .secondary)
+                compactTransportRow(
+                    title: "TX",
+                    preset: entry.state.sendPresetName,
+                    systemImage: entry.state.isMuted ? "mic.slash.fill" : "mic.fill",
+                    active: entry.state.isStreaming,
+                    muted: entry.state.isMuted
+                )
             }
 
-            transportStrip
+            if isActive {
+                controlBar(compact: true)
+            } else {
+                openAppButton
+            }
+        }
+    }
+
+    // MARK: - Home Screen medium
+
+    private var medium: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            widgetHeader(compact: false)
+
+            HStack(spacing: 10) {
+                transportCard(
+                    title: "RECEIVE",
+                    preset: entry.state.receivePresetName,
+                    systemImage: entry.state.isReceiveMuted ? "speaker.slash.fill" : "speaker.wave.2.fill",
+                    active: entry.state.isReceiving,
+                    muted: entry.state.isReceiveMuted
+                )
+
+                transportCard(
+                    title: "TRANSMIT",
+                    preset: entry.state.sendPresetName,
+                    systemImage: entry.state.isMuted ? "mic.slash.fill" : "mic.fill",
+                    active: entry.state.isStreaming,
+                    muted: entry.state.isMuted
+                )
+            }
 
             Spacer(minLength: 0)
 
-            controls(minHeight: compact ? 31 : 34)
-        }
-        .widgetURL(isActive ? nil : URL(string: "mismeeter://home"))
-    }
-
-    private var transportStrip: some View {
-        HStack(spacing: 6) {
-            TransportPill(
-                label: "RX",
-                preset: entry.state.receivePresetName,
-                systemImage: entry.state.isReceiveMuted ? "speaker.slash.fill" : "speaker.wave.2.fill",
-                active: entry.state.isReceiving,
-                muted: entry.state.isReceiveMuted
-            )
-
-            TransportPill(
-                label: "TX",
-                preset: entry.state.sendPresetName,
-                systemImage: entry.state.isMuted ? "mic.slash.fill" : "mic.fill",
-                active: entry.state.isStreaming,
-                muted: entry.state.isMuted
-            )
-        }
-    }
-
-    @ViewBuilder
-    private func controls(minHeight: CGFloat) -> some View {
-        if isActive {
-            HStack(spacing: 6) {
-                ControlButton(
-                    systemImage: entry.state.isReceiveMuted ? "speaker.wave.2.fill" : "speaker.slash.fill",
-                    accessibilityText: entry.state.isReceiveMuted ? "Unmute receive audio" : "Mute receive audio",
-                    enabled: entry.state.isReceiving,
-                    active: entry.state.isReceiving,
-                    muted: entry.state.isReceiveMuted,
-                    minHeight: minHeight,
-                    intent: ToggleReceiveMuteIntent()
-                )
-
-                ControlButton(
-                    systemImage: entry.state.isMuted ? "mic.fill" : "mic.slash.fill",
-                    accessibilityText: entry.state.isMuted ? "Unmute microphone" : "Mute microphone",
-                    enabled: entry.state.isStreaming,
-                    active: entry.state.isStreaming,
-                    muted: entry.state.isMuted,
-                    minHeight: minHeight,
-                    intent: ToggleMuteIntent()
-                )
-
-                Button(intent: EndLiveActivityIntent()) {
-                    Image(systemName: "stop.fill")
-                        .font(.caption.weight(.bold))
-                        .frame(maxWidth: .infinity, minHeight: minHeight)
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(.red)
-                .accessibilityLabel("Stop all")
+            if isActive {
+                controlBar(compact: false)
+            } else {
+                openAppButton
             }
-        } else {
-            Link(destination: URL(string: "mismeeter://home")!) {
-                HStack(spacing: 8) {
-                    Image(systemName: "play.fill")
-                    Text("Open MisMeeter")
-                        .lineLimit(1)
-                    Spacer(minLength: 0)
-                    Image(systemName: "arrow.up.forward")
-                        .font(.caption.weight(.bold))
-                }
-                .font(.caption.weight(.semibold))
-                .frame(maxWidth: .infinity, minHeight: minHeight)
-            }
-            .buttonStyle(.borderedProminent)
-            .tint(.primary.opacity(0.82))
         }
     }
+
+    // MARK: - Lock Screen widgets
 
     private var accessoryCircular: some View {
         ZStack {
             AccessoryWidgetBackground()
+
             VStack(spacing: 2) {
-                Image(systemName: primaryAccessoryImage)
-                    .font(.body.weight(.bold))
-                Text(accessoryStateText)
-                    .font(.system(size: 9, weight: .bold, design: .rounded))
+                Image(systemName: isActive ? "waveform" : "waveform.slash")
+                    .font(.caption.weight(.bold))
+
+                Text(activeCountText)
+                    .font(.caption2.weight(.bold))
             }
         }
         .widgetAccentable()
@@ -193,135 +157,295 @@ private struct MisMeeterWidgetView: View {
     }
 
     private var accessoryRectangular: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 3) {
             HStack(spacing: 5) {
                 Image(systemName: "waveform")
-                    .font(.caption2.weight(.bold))
-                Text(isActive ? entry.state.status : "Ready")
-                    .font(.caption2.weight(.bold))
-                    .lineLimit(1)
+                    .font(.caption.weight(.bold))
+
+                Text("MisMeeter")
+                    .font(.caption.weight(.bold))
+
                 Spacer(minLength: 2)
-                Image(systemName: entry.state.isReceiveMuted ? "speaker.slash.fill" : "speaker.wave.1.fill")
-                Image(systemName: entry.state.isMuted ? "mic.slash.fill" : "mic.fill")
+
+                Text(overallStatusLabel)
+                    .font(.caption2.weight(.semibold))
             }
 
-            HStack(spacing: 7) {
-                accessoryPreset("RX", entry.state.receivePresetName)
-                accessoryPreset("TX", entry.state.sendPresetName)
+            HStack(spacing: 8) {
+                accessoryTransportLabel(
+                    prefix: "RX",
+                    preset: entry.state.receivePresetName,
+                    systemImage: entry.state.isReceiveMuted ? "speaker.slash.fill" : "speaker.wave.1.fill"
+                )
+
+                accessoryTransportLabel(
+                    prefix: "TX",
+                    preset: entry.state.sendPresetName,
+                    systemImage: entry.state.isMuted ? "mic.slash.fill" : "mic.fill"
+                )
             }
         }
         .widgetURL(URL(string: "mismeeter://home"))
     }
 
-    private func accessoryPreset(_ label: String, _ preset: String) -> some View {
-        HStack(spacing: 3) {
-            Text(label)
-                .font(.system(size: 9, weight: .bold, design: .rounded))
-            Text(preset)
-                .font(.caption2)
-                .lineLimit(1)
-                .minimumScaleFactor(0.65)
+    // MARK: - Header
+
+    private func widgetHeader(compact: Bool) -> some View {
+        HStack(spacing: 8) {
+            ZStack {
+                RoundedRectangle(cornerRadius: compact ? 7 : 8, style: .continuous)
+                    .fill(.primary.opacity(0.08))
+
+                Image(systemName: "waveform")
+                    .font((compact ? Font.caption : Font.subheadline).weight(.bold))
+                    .foregroundStyle(.primary)
+            }
+            .frame(width: compact ? 22 : 30, height: compact ? 22 : 30)
+
+            if !compact {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("MisMeeter")
+                        .font(.subheadline.weight(.bold))
+                    Text(statusSubtitle)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            } else {
+                Text("MisMeeter")
+                    .font(.caption.weight(.bold))
+            }
+
+            Spacer(minLength: 4)
+
+            HStack(spacing: 5) {
+                Circle()
+                    .fill(overallStatusColor)
+                    .frame(width: 7, height: 7)
+
+                Text(overallStatusLabel)
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 7)
+            .padding(.vertical, 5)
+            .background(.primary.opacity(0.055), in: Capsule())
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private var primaryAccessoryImage: String {
-        if entry.state.isStreaming {
-            return entry.state.isMuted ? "mic.slash.fill" : "mic.fill"
-        }
-        if entry.state.isReceiving {
-            return entry.state.isReceiveMuted ? "speaker.slash.fill" : "speaker.wave.2.fill"
-        }
-        return "waveform"
-    }
+    // MARK: - Transport presentation
 
-    private var accessoryStateText: String {
-        if entry.state.isStreaming && entry.state.isReceiving { return "RX·TX" }
-        if entry.state.isStreaming { return "TX" }
-        if entry.state.isReceiving { return "RX" }
-        return "IDLE"
-    }
-}
+    private func compactTransportRow(
+        title: String,
+        preset: String,
+        systemImage: String,
+        active: Bool,
+        muted: Bool
+    ) -> some View {
+        HStack(spacing: 8) {
+            ZStack {
+                Circle()
+                    .fill(transportColor(active: active, muted: muted).opacity(active ? 0.15 : 0.08))
 
-private struct WidgetSurface: View {
-    var body: some View {
-        ZStack {
-            Color(uiColor: .secondarySystemBackground)
-            LinearGradient(
-                colors: [Color.primary.opacity(0.055), Color.clear],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
-        }
-    }
-}
+                Image(systemName: systemImage)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(transportColor(active: active, muted: muted))
+            }
+            .frame(width: 23, height: 23)
 
-private struct TransportPill: View {
-    let label: String
-    let preset: String
-    let systemImage: String
-    let active: Bool
-    let muted: Bool
+            VStack(alignment: .leading, spacing: 1) {
+                HStack(spacing: 4) {
+                    Text(title)
+                        .font(.caption2.weight(.bold))
+                        .foregroundStyle(.secondary)
 
-    private var stateColor: Color {
-        guard active else { return .secondary }
-        return muted ? .red : .green
-    }
+                    Text(transportStateLabel(active: active, muted: muted))
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(transportColor(active: active, muted: muted))
+                }
 
-    var body: some View {
-        HStack(spacing: 5) {
-            Text(label)
-                .font(.system(size: 9, weight: .heavy, design: .rounded))
-                .foregroundStyle(stateColor)
-
-            Text(preset)
-                .font(.caption2.weight(.semibold))
-                .lineLimit(1)
-                .minimumScaleFactor(0.62)
-                .allowsTightening(true)
+                Text(preset)
+                    .font(.caption.weight(.semibold))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.72)
+            }
 
             Spacer(minLength: 0)
-
-            Image(systemName: systemImage)
-                .font(.caption2.weight(.bold))
-                .foregroundStyle(stateColor)
         }
-        .padding(.horizontal, 8)
-        .frame(maxWidth: .infinity, minHeight: 30)
-        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .strokeBorder(Color.primary.opacity(0.07), lineWidth: 0.5)
-        }
-        .opacity(active ? 1 : 0.68)
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(label), \(preset), \(active ? (muted ? "muted" : "active") : "inactive")")
-    }
-}
-
-private struct ControlButton<I: AppIntent>: View {
-    let systemImage: String
-    let accessibilityText: String
-    let enabled: Bool
-    let active: Bool
-    let muted: Bool
-    let minHeight: CGFloat
-    let intent: I
-
-    private var tint: Color {
-        guard active else { return .gray }
-        return muted ? .red : .green
+        .padding(.horizontal, 7)
+        .padding(.vertical, 3)
+        .background(.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
 
-    var body: some View {
+    private func transportCard(
+        title: String,
+        preset: String,
+        systemImage: String,
+        active: Bool,
+        muted: Bool
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(transportColor(active: active, muted: muted).opacity(active ? 0.15 : 0.08))
+
+                    Image(systemName: systemImage)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(transportColor(active: active, muted: muted))
+                }
+                .frame(width: 31, height: 31)
+
+                Spacer(minLength: 4)
+
+                Text(transportStateLabel(active: active, muted: muted))
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(transportColor(active: active, muted: muted))
+            }
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.caption2.weight(.bold))
+                    .foregroundStyle(.secondary)
+
+                Text(preset)
+                    .font(.subheadline.weight(.semibold))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(10)
+        .background(.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 13, style: .continuous))
+    }
+
+    // MARK: - Controls
+
+    private func controlBar(compact: Bool) -> some View {
+        HStack(spacing: compact ? 6 : 8) {
+            intentControl(
+                systemImage: entry.state.isReceiveMuted ? "speaker.wave.2.fill" : "speaker.slash.fill",
+                accessibilityLabel: entry.state.isReceiveMuted ? "Unmute receive audio" : "Mute receive audio",
+                disabled: !entry.state.isReceiving,
+                foreground: transportColor(active: entry.state.isReceiving, muted: entry.state.isReceiveMuted),
+                compact: compact,
+                intent: ToggleReceiveMuteIntent()
+            )
+
+            intentControl(
+                systemImage: entry.state.isMuted ? "mic.fill" : "mic.slash.fill",
+                accessibilityLabel: entry.state.isMuted ? "Unmute microphone" : "Mute microphone",
+                disabled: !entry.state.isStreaming,
+                foreground: transportColor(active: entry.state.isStreaming, muted: entry.state.isMuted),
+                compact: compact,
+                intent: ToggleMuteIntent()
+            )
+
+            Button(intent: EndLiveActivityIntent()) {
+                HStack(spacing: 5) {
+                    Image(systemName: "stop.fill")
+                    if !compact {
+                        Text("Stop")
+                            .font(.caption.weight(.bold))
+                    }
+                }
+                .font(.caption.weight(.bold))
+                .foregroundStyle(.red)
+                .frame(maxWidth: .infinity, minHeight: compact ? 28 : 34)
+                .background(.red.opacity(0.11), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Stop all audio")
+        }
+    }
+
+    private func intentControl<I: AppIntent>(
+        systemImage: String,
+        accessibilityLabel: String,
+        disabled: Bool,
+        foreground: Color,
+        compact: Bool,
+        intent: I
+    ) -> some View {
         Button(intent: intent) {
             Image(systemName: systemImage)
                 .font(.caption.weight(.bold))
-                .frame(maxWidth: .infinity, minHeight: minHeight)
+                .foregroundStyle(disabled ? Color.secondary : foreground)
+                .frame(maxWidth: .infinity, minHeight: compact ? 28 : 34)
+                .background(
+                    (disabled ? Color.secondary : foreground).opacity(disabled ? 0.07 : 0.11),
+                    in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+                )
         }
-        .buttonStyle(.borderedProminent)
-        .tint(tint)
-        .disabled(!enabled)
-        .accessibilityLabel(accessibilityText)
+        .buttonStyle(.plain)
+        .disabled(disabled)
+        .accessibilityLabel(Text(accessibilityLabel))
+    }
+
+    private var openAppButton: some View {
+        Link(destination: URL(string: "mismeeter://home")!) {
+            HStack(spacing: 7) {
+                Image(systemName: "arrow.up.forward.app.fill")
+                Text("Open MisMeeter")
+                    .font(.caption.weight(.bold))
+                Spacer(minLength: 0)
+            }
+            .foregroundStyle(.primary)
+            .frame(maxWidth: .infinity, minHeight: 34)
+            .padding(.horizontal, 10)
+            .background(.primary.opacity(0.07), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        }
+    }
+
+    // MARK: - Accessory building blocks
+
+    private func accessoryTransportLabel(prefix: String, preset: String, systemImage: String) -> some View {
+        HStack(spacing: 3) {
+            Image(systemName: systemImage)
+            Text("\(prefix) · \(preset)")
+                .lineLimit(1)
+                .minimumScaleFactor(0.55)
+        }
+        .font(.caption2.weight(.semibold))
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    // MARK: - State helpers
+
+    private var activeCountText: String {
+        let count = (entry.state.isStreaming ? 1 : 0) + (entry.state.isReceiving ? 1 : 0)
+        return count == 0 ? "Idle" : "\(count)/2"
+    }
+
+    private var overallStatusLabel: String {
+        switch (entry.state.isReceiving, entry.state.isStreaming) {
+        case (true, true): return "Duplex"
+        case (true, false): return "RX Live"
+        case (false, true): return "TX Live"
+        case (false, false): return "Idle"
+        }
+    }
+
+    private var statusSubtitle: String {
+        guard isActive else { return "No active audio transport" }
+        if entry.state.isReceiveMuted && entry.state.isMuted { return "RX and TX muted" }
+        if entry.state.isReceiveMuted { return "Receive audio muted" }
+        if entry.state.isMuted { return "Microphone muted" }
+        return entry.state.isReceiving && entry.state.isStreaming ? "Receive and transmit active" : "Audio transport active"
+    }
+
+    private var overallStatusColor: Color {
+        guard isActive else { return .secondary }
+        return (entry.state.isReceiveMuted || entry.state.isMuted) ? .orange : .green
+    }
+
+    private func transportStateLabel(active: Bool, muted: Bool) -> String {
+        guard active else { return "Off" }
+        return muted ? "Muted" : "Live"
+    }
+
+    private func transportColor(active: Bool, muted: Bool) -> Color {
+        guard active else { return .secondary }
+        return muted ? .orange : .green
     }
 }

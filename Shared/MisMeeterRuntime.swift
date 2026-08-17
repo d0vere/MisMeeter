@@ -122,6 +122,7 @@ final class MisMeeterRuntime {
         }
         if isReceiving { AudioSessionCoordinator.shared.forceSpeaker() }
         publishSharedState(status: isReceiving ? "Duplex live" : "Live")
+        configureNowPlayingControls()
         await ensureLiveActivity()
     }
 
@@ -139,6 +140,7 @@ final class MisMeeterRuntime {
             _isMuted = false
             if !_isReceiving { _startedAt = nil }
         }
+        NowPlayingRemoteController.shared.deactivate()
         publishSharedState(status: keepAudioSession ? receiveStatusText : "Ready")
         await updateActivityLifecycle()
     }
@@ -177,6 +179,7 @@ final class MisMeeterRuntime {
         if hadRX {
             receiver.stop(deactivateSession: false)
         }
+        NowPlayingRemoteController.shared.deactivate()
         AudioSessionCoordinator.shared.deactivateIfPossible()
         stateQueue.sync {
             _isStreaming = false
@@ -200,6 +203,7 @@ final class MisMeeterRuntime {
         }
         transmitter.setMuted(value)
         publishSharedState(status: value ? "Microphone muted" : (isReceiving ? "Duplex live" : "Live"))
+        NowPlayingRemoteController.shared.syncState()
         Task { await syncLiveActivity() }
         return value
     }
@@ -209,6 +213,7 @@ final class MisMeeterRuntime {
         stateQueue.sync { _isMuted = value }
         transmitter.setMuted(value)
         publishSharedState(status: value ? "Microphone muted" : (isReceiving ? "Duplex live" : "Live"))
+        NowPlayingRemoteController.shared.syncState()
         Task { await syncLiveActivity() }
     }
 
@@ -218,6 +223,7 @@ final class MisMeeterRuntime {
         let value = receiver.toggleOutputMuted()
         stateQueue.sync { _isReceiveMuted = value }
         publishSharedState(status: value ? "Receive muted" : (isStreaming ? "Duplex live" : "Listening"))
+        NowPlayingRemoteController.shared.syncState()
         Task { await syncLiveActivity() }
         return value
     }
@@ -227,7 +233,22 @@ final class MisMeeterRuntime {
         receiver.setOutputMuted(value)
         stateQueue.sync { _isReceiveMuted = value }
         publishSharedState(status: value ? "Receive muted" : (isStreaming ? "Duplex live" : "Listening"))
+        NowPlayingRemoteController.shared.syncState()
         Task { await syncLiveActivity() }
+    }
+
+    private func configureNowPlayingControls() {
+        NowPlayingRemoteController.shared.activate(
+            isTXActive: { [weak self] in self?.isStreaming ?? false },
+            isRXActive: { [weak self] in self?.isReceiving ?? false },
+            isMicrophoneMuted: { [weak self] in self?.isMuted ?? true },
+            setMicrophoneMuted: { [weak self] muted in self?.setMuted(muted) },
+            toggleReceiveMute: { [weak self] in _ = self?.toggleReceiveMuted() },
+            stopAll: { [weak self] in
+                guard let self else { return }
+                Task { await self.stopAll() }
+            }
+        )
     }
 
     func beginLockTransition() {

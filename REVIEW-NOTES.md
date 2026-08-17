@@ -1,4 +1,4 @@
-# MisMeeter 3.2.7 — iOS 18.5 UI / Duplex Live Activity
+# MisMeeter 3.2.9 — iOS 18.5 UI / Duplex Live Activity
 
 - Deployment target moved to iOS 18.5; custom cards/navigation use an iOS 18.5-compatible ultra-thin Material treatment.
 - Dynamic Island compact mode is symmetric: RX speaker at compact-leading, TX microphone at compact-trailing. Red indicates that channel is muted, green indicates active audio.
@@ -106,3 +106,20 @@ A full iOS SDK semantic build cannot run in this Linux environment. GitHub Actio
 - Home Screen small/medium widgets use one HStack only: `RX - preset`, `TX - preset`, then RX/TX icons at the far right.
 - Accessory rectangular widget now follows the same one-row information grammar instead of stacking RX/TX.
 - Version bumped to 3.2.7 (build 39).
+
+## 3.2.9 Lock Screen controls / intent hardening
+- Added three iOS 18 `ControlWidget` actions for Receive mute, Microphone mute and Stop All.
+- These Controls can be placed in supported system control surfaces, including the Lock Screen controls area and Control Center.
+- `ToggleReceiveMuteIntent`, `ToggleMuteIntent`, and `EndLiveActivityIntent` now explicitly use `IntentAuthenticationPolicy.alwaysAllowed` and keep `openAppWhenRun = false`.
+- Traditional WidgetKit buttons remain subject to Apple's locked-device security policy; iOS intentionally doesn't execute their actions until the user authenticates/unlocks. The new Control Widgets are the supported action-oriented alternative.
+- Version bumped to 3.2.9 (build 40).
+
+## 3.2.9 — Lock Screen media controls / car safety
+
+- Added `NowPlayingRemoteController` using `MPRemoteCommandCenter`.
+- Mapping: Play = microphone unmute; Pause = microphone mute; Previous = toggle RX mute; Next = Stop All.
+- Remote Play is strictly gated by an already-running TX session and never calls `start()`.
+- Added a bundled 48 kHz mono silent WAV used only as the temporary Now Playing media source while TX is active.
+- On Car Audio or Bluetooth A2DP/HFP/LE routes/accessories, MisMeeter withdraws from Now Playing and unregisters its remote-command handlers so vehicle/headset Play remains available to the user's normal media player.
+- `stopAll()` and TX stop remove Now Playing state and remote handlers.
+- Note: public `MPRemoteCommandEvent` does not identify whether a command originated specifically from the Lock Screen versus a Bluetooth accessory, so protection is implemented by session state + audio-route gating rather than source inspection.

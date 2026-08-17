@@ -11,22 +11,33 @@ struct MisMeeterLiveActivity: Widget {
                 .activitySystemActionForegroundColor(.primary)
         } dynamicIsland: { context in
             DynamicIsland {
+                // Keep the RX/TX indicators in the same visual anchors used by the
+                // compact island. Expanded content grows around them instead of
+                // pushing the indicators toward the outer clipped edges.
                 DynamicIslandExpandedRegion(.leading) {
-                    HStack(spacing: 7) {
+                    HStack(spacing: 0) {
+                        Spacer(minLength: 0)
                         if context.state.isReceiving {
                             receiveIndicator(context.state)
+                                .accessibilityLabel(context.state.isReceiveMuted ? "Receive audio muted" : "Receive audio active")
                         }
-                        Text("Live")
-                            .font(.headline)
-                            .lineLimit(1)
                     }
-                    .padding(.leading, 16)
+                }
+
+                DynamicIslandExpandedRegion(.center) {
+                    Text("Live")
+                        .font(.headline)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.85)
                 }
 
                 DynamicIslandExpandedRegion(.trailing) {
-                    if context.state.isStreaming {
-                        microphoneIndicator(context.state)
-                            .padding(.trailing, 16)
+                    HStack(spacing: 0) {
+                        if context.state.isStreaming {
+                            microphoneIndicator(context.state)
+                                .accessibilityLabel(context.state.isMuted ? "Microphone muted" : "Microphone active")
+                        }
+                        Spacer(minLength: 0)
                     }
                 }
 

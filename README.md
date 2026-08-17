@@ -1,14 +1,12 @@
-# MisMeeter 3.2.3 — Audio-clocked VBAN for iOS
+# MisMeeter 3.2.4 — Audio-clocked VBAN for iOS
 
-## 3.2.3 interface refinement
+## 3.2.4 interface refinement
 
-- TX root is now **Send**.
-- Input gain and Capture Engine live on Send instead of Settings.
-- Send ends with a quality card matching the Receive diagnostics language.
-- Expanded Live Activity content is inset toward the center to avoid island-mask clipping.
-- Widgets prioritize active preset name + current status, including the correct RX preset for receive-only sessions.
-
-MisMeeter streams the iPhone microphone to a VBAN/VoiceMeeter destination and can independently receive a VBAN stream back to the iPhone.
+- Send status tiles (TX/RX) are positioned above Send Controls.
+- Expanded Dynamic Island keeps the RX speaker and TX microphone anchored toward the sensor, matching their compact visual positions.
+- Home Screen Widget is now a dedicated Send/Receive dashboard instead of mirroring the Live Activity.
+- Widget shows preset, independent RX/TX state and quick controls; Lock Screen accessory widgets remain deliberately compact.
+- Xcode 16.4 / iOS 18.5 compatibility is unchanged.
 
 ## What changed in 3.0
 
@@ -44,7 +42,7 @@ The app UI was rebuilt around four system-native areas:
 The project is compiled with Xcode 16.4 and the iOS 18.5 SDK. The custom floating navigation and cards use a lightweight ultra-thin Material treatment with subtle borders and shadows, preserving the modern translucent direction without relying on iOS 26-only APIs.
 
 ### Duplex Live Activity + Dynamic Island + Widget
-These remain first-class system surfaces in 3.2.3 on iOS 18.5:
+These remain first-class system surfaces in 3.2.4 on iOS 18.5:
 - Lock Screen Live Activity with large RX mute, microphone mute and Stop All controls
 - compact Dynamic Island with RX speaker on the left and TX microphone on the right
 - RX-only and TX-only Live Activity lifecycle support
@@ -66,7 +64,7 @@ A new waveform/glass app icon is included in `MisMeeter/Assets.xcassets/AppIcon.
 - regenerates the Xcode project
 - validates generated plists and entitlements
 - builds the app and Widget Extension for generic iOS device with signing disabled
-- packages `MisMeeter-3.2.3-unsigned.ipa`
+- packages `MisMeeter-3.2.4-unsigned.ipa`
 - uploads the IPA and failure logs
 
 ## Local generation

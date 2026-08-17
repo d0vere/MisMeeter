@@ -164,11 +164,11 @@ struct ContentView: View {
             VStack(spacing: 18) {
                 heroCard
                 audioLevelCard
-                sendControlsCard
                 HStack(spacing: 12) {
                     compactStatusCard(title: "TX", value: txStatus, icon: "arrow.up.circle.fill", active: isStreaming)
                     compactStatusCard(title: "RX", value: rxStatus, icon: "arrow.down.circle.fill", active: isReceiving)
                 }
+                sendControlsCard
                 sendQualityCard
             }
             .padding(16)

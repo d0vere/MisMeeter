@@ -1,63 +1,64 @@
-# MisMeeter v1.2.1 — Direct Realtime UDP
+# MisMeeter v1.3 — Duplex VBAN
 
-## Why this version
+MisMeeter can now operate in both directions independently.
 
-On-device diagnostics showed:
+## MIC -> VBAN
 
-- Core Audio callback: 256 frames / 5.33 ms
-- Underruns: 0
-- Max network send gap after lock: ~88 ms
+Existing transmitter:
 
-Therefore microphone capture is healthy while the ordinary networking queue is occasionally not
-scheduled for many audio periods after screen lock.
+iPhone microphone -> VBAN UDP -> VoiceMeeter
 
-## Realtime UDP experiment
-
-v1.2 removes Network.framework from the packet send hot path.
-
-Before streaming:
-- create an IPv4 UDP socket
-- connect it to the configured VBAN destination
-- mark it O_NONBLOCK
-- increase SO_SNDBUF
-- preallocate the 540-byte VBAN packet buffer
-
-During each 256-frame AVAudioSinkNode callback:
-- update the preallocated VBAN header/frame counter
-- copy PCM16 samples
-- call nonblocking send()
-
-No GCD networking queue is required for the actual packet submission.
-
-This is intentionally an aggressive realtime experiment. The socket is nonblocking so the audio
-thread never waits for the network. A failed/EAGAIN send is counted in Underruns/Errors rather than
-blocking Core Audio.
-
-Important: v1.2 realtime UDP requires an IPv4 address in presets. Hostname resolution is intentionally
-not performed on the audio thread.
-
-## Live Activity force-quit behaviour
-
-Apple intentionally keeps Live Activities independent of the host app process, so force-quitting the
-app does not automatically dismiss them.
-
-v1.2 improves the UX in two ways:
-1. On the next app launch, any orphan Live Activity is ended automatically when VBAN is not running.
-2. The Live Activity now includes an END button that asks ActivityKit to dismiss it immediately.
-
-There is no reliable public iOS callback that guarantees cleanup at the exact moment the user
-force-quits an already-backgrounded app.
-
-## Existing features retained
-
-- AVAudioSinkNode realtime microphone
+Features retained:
+- 3 TX presets
+- gain 0...+24 dB
 - Apple Voice Processing
-- 3 VBAN presets
-- software gain
-- Live Activity / Dynamic Island mute
-- 48 kHz PCM16 mono
+- Live Activity / Dynamic Island
+- mute
+- direct realtime UDP
 
+## VBAN -> iPhone
 
-## v1.2.1
+New independent receiver:
 
-Build fix for iOS/Xcode 16.4: use `SOCK_DGRAM` directly because it is already an `Int32` on this SDK.
+VoiceMeeter VBAN OUT -> UDP -> MisMeeter -> iPhone speaker
+
+Features:
+- 3 completely separate RX presets
+- each RX preset stores:
+  - name
+  - local UDP listen port
+  - VBAN stream name
+  - jitter-buffer size
+- PCM16 48 kHz
+- mono streams duplicated to L/R
+- stereo streams preserved
+- realtime AVAudioSourceNode playback
+- jitter buffer with automatic re-prime after an underflow
+- packet/loss/underflow diagnostics
+
+TX and RX can be:
+- both OFF
+- TX only
+- RX only
+- TX + RX simultaneously
+
+## VoiceMeeter RX setup
+
+To listen on the iPhone:
+
+1. Find the iPhone LAN IPv4 address.
+2. In VoiceMeeter VBAN OUT create/enable a stream.
+3. Destination IP = iPhone IPv4.
+4. Destination port = selected MisMeeter RX preset port.
+5. Stream Name = exact MisMeeter RX stream name.
+6. Use 48 kHz PCM16 mono or stereo.
+7. Press Start Listening in MisMeeter.
+
+If Wi-Fi jitter is audible, increase the RX preset Jitter Buffer slider.
+Start around 100 ms.
+
+## Audio-session coexistence
+
+When microphone TX is active, MisMeeter uses playAndRecord so speaker RX can run at the same time.
+Stopping TX does not deactivate the iOS audio session when RX is still active, and stopping RX does
+not deactivate it while TX is still active.

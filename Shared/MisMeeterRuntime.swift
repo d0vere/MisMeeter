@@ -10,9 +10,11 @@ final class MisMeeterRuntime {
 
     private let transmitter: VBANTransmitter
     private let microphone: MicrophoneEngine
+    private let receiver: VBANReceiver
 
     private var _isMuted = false
     private var _isStreaming = false
+    private var _isReceiving = false
     private var _preset = VBANPreset(
         name: "Preset 1",
         host: "",
@@ -29,12 +31,15 @@ final class MisMeeterRuntime {
     var onPrimedChange: ((Bool) -> Void)?
     var onPLLStats: ((Double, Double, Double, Double, UInt64) -> Void)?
     var onVoiceProcessingState: ((Bool) -> Void)?
+    var onReceiverStatus: ((String) -> Void)?
+    var onReceiverDiagnostics: ((UInt64, UInt64, UInt64, Int, UInt64, Bool) -> Void)?
     var onTransportMode: ((TransportState, Int, Int, Double) -> Void)?
 
     private init() {
         let tx = VBANTransmitter()
         transmitter = tx
         microphone = MicrophoneEngine(transmitter: tx)
+        receiver = VBANReceiver()
 
         microphone.onMeter = { [weak self] value in
             self?.onMeter?(value)
@@ -74,6 +79,21 @@ final class MisMeeterRuntime {
         transmitter.onTransportMode = { [weak self] state, batchSize, bufferedSamples, maxGapMS in
             self?.onTransportMode?(state, batchSize, bufferedSamples, maxGapMS)
         }
+
+        receiver.onStatus = { [weak self] value in
+            self?.onReceiverStatus?(value)
+        }
+
+        receiver.onDiagnostics = { [weak self] received, rejected, lost, buffered, underflows, primed in
+            self?.onReceiverDiagnostics?(
+                received,
+                rejected,
+                lost,
+                buffered,
+                underflows,
+                primed
+            )
+        }
     }
 
     var isMuted: Bool {
@@ -82,6 +102,10 @@ final class MisMeeterRuntime {
 
     var isStreaming: Bool {
         stateQueue.sync { _isStreaming }
+    }
+
+    var isReceiving: Bool {
+        stateQueue.sync { _isReceiving }
     }
 
     var activePreset: VBANPreset {
@@ -128,7 +152,12 @@ final class MisMeeterRuntime {
     }
 
     func stop() async {
-        microphone.stop()
+        let keepAudioSession = isReceiving
+
+        microphone.stop(
+            deactivateSession: !keepAudioSession
+        )
+
         transmitter.stop()
 
         stateQueue.sync {
@@ -136,6 +165,31 @@ final class MisMeeterRuntime {
         }
 
         await endLiveActivity()
+    }
+
+    func startReceiving(
+        preset: VBANReceivePreset
+    ) throws {
+        try receiver.start(
+            preset: preset,
+            transmitterAlreadyActive: isStreaming
+        )
+
+        stateQueue.sync {
+            _isReceiving = true
+        }
+    }
+
+    func stopReceiving() {
+        let keepAudioSession = isStreaming
+
+        receiver.stop(
+            deactivateSession: !keepAudioSession
+        )
+
+        stateQueue.sync {
+            _isReceiving = false
+        }
     }
 
     @discardableResult

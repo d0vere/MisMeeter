@@ -2,275 +2,289 @@ import AVFoundation
 import SwiftUI
 
 struct ContentView: View {
-    @Environment(\.scenePhase) private var scenePhase
-    @AppStorage("selectedPreset") private var selectedPreset = 0
+    @Environment(\.scenePhase)
+    private var scenePhase
 
-    @AppStorage("p1Name") private var p1Name = "Preset 1"
-    @AppStorage("p1Host") private var p1Host = ""
-    @AppStorage("p1Port") private var p1Port = "6980"
-    @AppStorage("p1Stream") private var p1Stream = "MisMeeter"
+    // ---------------- TX presets ----------------
 
-    @AppStorage("p2Name") private var p2Name = "Preset 2"
-    @AppStorage("p2Host") private var p2Host = ""
-    @AppStorage("p2Port") private var p2Port = "6980"
-    @AppStorage("p2Stream") private var p2Stream = "MisMeeter2"
+    @AppStorage("selectedPreset")
+    private var selectedTXPreset = 0
 
-    @AppStorage("p3Name") private var p3Name = "Preset 3"
-    @AppStorage("p3Host") private var p3Host = ""
-    @AppStorage("p3Port") private var p3Port = "6980"
-    @AppStorage("p3Stream") private var p3Stream = "MisMeeter3"
+    @AppStorage("p1Name")
+    private var p1Name = "Preset 1"
+    @AppStorage("p1Host")
+    private var p1Host = ""
+    @AppStorage("p1Port")
+    private var p1Port = "6980"
+    @AppStorage("p1Stream")
+    private var p1Stream = "MisMeeter"
 
-    @AppStorage("microphoneGainDB") private var gainDB = 12.0
-    @AppStorage("transmissionModeV08") private var transmissionModeRaw = VBANTransmissionMode.automatic.rawValue
-    @AppStorage("appleVoiceProcessing") private var appleVoiceProcessing = false
+    @AppStorage("p2Name")
+    private var p2Name = "Preset 2"
+    @AppStorage("p2Host")
+    private var p2Host = ""
+    @AppStorage("p2Port")
+    private var p2Port = "6980"
+    @AppStorage("p2Stream")
+    private var p2Stream = "MisMeeter2"
 
-    @State private var isStreaming = MisMeeterRuntime.shared.isStreaming
-    @State private var isMuted = MisMeeterRuntime.shared.isMuted
-    @State private var status = "Ready"
+    @AppStorage("p3Name")
+    private var p3Name = "Preset 3"
+    @AppStorage("p3Host")
+    private var p3Host = ""
+    @AppStorage("p3Port")
+    private var p3Port = "6980"
+    @AppStorage("p3Stream")
+    private var p3Stream = "MisMeeter3"
+
+    @AppStorage("microphoneGainDB")
+    private var gainDB = 12.0
+
+    @AppStorage("appleVoiceProcessing")
+    private var appleVoiceProcessing = false
+
+    @AppStorage("transmissionModeV08")
+    private var transmissionModeRaw =
+        VBANTransmissionMode.automatic.rawValue
+
+    // ---------------- RX presets ----------------
+
+    @AppStorage("selectedRXPreset")
+    private var selectedRXPreset = 0
+
+    @AppStorage("rx1Name")
+    private var rx1Name = "RX 1"
+    @AppStorage("rx1Port")
+    private var rx1Port = "6980"
+    @AppStorage("rx1Stream")
+    private var rx1Stream = "PC-Main"
+    @AppStorage("rx1Buffer")
+    private var rx1Buffer = 100.0
+
+    @AppStorage("rx2Name")
+    private var rx2Name = "RX 2"
+    @AppStorage("rx2Port")
+    private var rx2Port = "6980"
+    @AppStorage("rx2Stream")
+    private var rx2Stream = "PC-Aux"
+    @AppStorage("rx2Buffer")
+    private var rx2Buffer = 100.0
+
+    @AppStorage("rx3Name")
+    private var rx3Name = "RX 3"
+    @AppStorage("rx3Port")
+    private var rx3Port = "6980"
+    @AppStorage("rx3Stream")
+    private var rx3Stream = "PC-Other"
+    @AppStorage("rx3Buffer")
+    private var rx3Buffer = 100.0
+
+    // ---------------- TX state ----------------
+
+    @State private var isStreaming =
+        MisMeeterRuntime.shared.isStreaming
+    @State private var isMuted =
+        MisMeeterRuntime.shared.isMuted
+    @State private var txStatus = "TX ready"
     @State private var meter: Float = 0
-    @State private var bufferSamples = 0
     @State private var packetsSent: UInt64 = 0
     @State private var callbackFrames = 0
     @State private var actualIOBufferMS = 0.0
-    @State private var underruns: UInt64 = 0
-    @State private var senderPrimed = false
-    @State private var adaptiveLatencyMS = 150.0
-    @State private var measuredCaptureHz = 48000.0
-    @State private var effectiveTXHz = 48000.0
-    @State private var schedulerLateMS = 0.0
-    @State private var catchUpPackets: UInt64 = 0
+    @State private var sendErrors: UInt64 = 0
     @State private var voiceProcessingActive = false
-    @State private var transportState = TransportState.foregroundRealtime
-    @State private var currentBatchSize = 1
-    @State private var backgroundBufferedSamples = 0
+    @State private var measuredCaptureHz = 48_000.0
+    @State private var effectiveTXHz = 48_000.0
     @State private var maxSendGapMS = 0.0
+
+    // ---------------- RX state ----------------
+
+    @State private var isReceiving =
+        MisMeeterRuntime.shared.isReceiving
+    @State private var rxStatus = "RX ready"
+    @State private var rxPackets: UInt64 = 0
+    @State private var rxRejected: UInt64 = 0
+    @State private var rxLost: UInt64 = 0
+    @State private var rxBufferedFrames = 0
+    @State private var rxUnderflows: UInt64 = 0
+    @State private var rxPrimed = false
 
     var body: some View {
         NavigationStack {
             Form {
-                Section("Preset") {
-                    Picker("Active preset", selection: $selectedPreset) {
-                        Text(p1Name.isEmpty ? "Preset 1" : p1Name).tag(0)
-                        Text(p2Name.isEmpty ? "Preset 2" : p2Name).tag(1)
-                        Text(p3Name.isEmpty ? "Preset 3" : p3Name).tag(2)
-                    }
-                    .pickerStyle(.segmented)
-                    .disabled(isStreaming)
-
-                    presetEditor
-                }
-
-                Section("Transport") {
-                    LabeledContent("Clock", value: "AVAudioSinkNode realtime")
-                    Text(
-                        "The VBAN sender now follows the realtime Core Audio input render clock. " +
-                        "It does not depend on a DispatchSourceTimer, so screen lock should not fragment packet timing."
-                    )
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                }
-
-                Section("Audio processing") {
-                    Toggle(
-                        "Apple Voice Processing",
-                        isOn: $appleVoiceProcessing
-                    )
-                    .disabled(isStreaming)
-
-                    Text(
-                        "Uses Apple's VoiceProcessingIO DSP for speech: noise suppression, " +
-                        "automatic gain processing and echo cancellation. " +
-                        "It can change the tonal character of the microphone. Stop VBAN before changing it."
-                    )
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-
-                    if isStreaming {
-                        LabeledContent(
-                            "Voice Processing active",
-                            value: voiceProcessingActive ? "Yes" : "No"
-                        )
-                    }
-                }
-
-                Section("Microphone") {
-                    HStack {
-                        Image(
-                            systemName: isMuted
-                                ? "mic.slash.fill"
-                                : "mic.fill"
-                        )
-                        .font(.title2)
-
-                        VStack(alignment: .leading, spacing: 5) {
-                            Text(isMuted ? "Muted" : "Live")
-                                .font(.headline)
-
-                            ProgressView(value: Double(meter))
-                        }
-                    }
-
-                    VStack(alignment: .leading) {
-                        HStack {
-                            Text("Software gain")
-                            Spacer()
-                            Text("+\(Int(gainDB)) dB")
-                                .monospacedDigit()
-                        }
-
-                        Slider(
-                            value: $gainDB,
-                            in: 0...24,
-                            step: 1
-                        )
-                        .onChange(of: gainDB) { _, newValue in
-                            MisMeeterRuntime.shared.gainDB = Float(newValue)
-                        }
-                    }
-
-                    Button {
-                        toggleMuteFromApp()
-                    } label: {
-                        Label(
-                            isMuted ? "Unmute microphone" : "Mute microphone",
-                            systemImage: isMuted ? "mic.fill" : "mic.slash.fill"
-                        )
-                    }
-                    .disabled(!isStreaming)
-                }
-
-                Section {
-                    Button {
-                        Task {
-                            if isStreaming {
-                                await stopStreaming()
-                            } else {
-                                await startStreaming()
-                            }
-                        }
-                    } label: {
-                        Label(
-                            isStreaming ? "Stop VBAN" : "Start VBAN",
-                            systemImage: isStreaming
-                                ? "stop.fill"
-                                : "dot.radiowaves.left.and.right"
-                        )
-                        .frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .listRowBackground(Color.clear)
-                }
-
-                Section("Status") {
-                    Text(status)
-
-                    if isStreaming {
-                        let preset = currentPreset
-
-                        LabeledContent("Preset", value: preset.name)
-                        LabeledContent("Stream", value: preset.sanitizedStreamName)
-                        LabeledContent("Destination", value: preset.destinationLabel)
-                        LabeledContent("Format", value: "48 kHz • PCM16 • Mono")
-                        LabeledContent("Packet", value: "256 samples • 5.33 ms")
-                        LabeledContent("Sender buffer", value: "\(bufferSamples) samples")
-                        LabeledContent("Input callback", value: "\(callbackFrames) frames")
-                        LabeledContent(
-                            "Actual I/O buffer",
-                            value: String(format: "%.2f ms", actualIOBufferMS)
-                        )
-                        LabeledContent("Sender primed", value: senderPrimed ? "Yes" : "No")
-                        LabeledContent("Sender target", value: "Realtime")
-                        LabeledContent("Capture rate", value: String(format: "%.1f Hz", measuredCaptureHz))
-                        LabeledContent("TX rate", value: String(format: "%.1f Hz", effectiveTXHz))
-                        LabeledContent("Software scheduler", value: "Disabled")
-                        LabeledContent("Capture clock", value: "Audio realtime")
-                        LabeledContent(
-                            "Transport state",
-                            value: transportState.rawValue
-                        )
-                        LabeledContent("VBAN batch", value: "\(currentBatchSize) packet(s)")
-                        LabeledContent(
-                            "Batch buffer",
-                            value: "\(backgroundBufferedSamples) samples"
-                        )
-                        LabeledContent(
-                            "Max send gap",
-                            value: String(format: "%.2f ms", maxSendGapMS)
-                        )
-                        LabeledContent("Underruns", value: "\(underruns)")
-                        LabeledContent("Packets sent", value: "\(packetsSent)")
-                    }
-                }
-
-                Section {
-                    Text(
-                        "v1.2 bypasses the background-sensitive Network.framework/GCD send queue. " +
-                        "VBAN UDP is submitted through a pre-opened nonblocking socket directly from the Core Audio realtime cadence."
-                    )
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                }
+                txSection
+                rxSection
+                diagnosticsSection
             }
             .navigationTitle("MisMeeter")
             .onAppear {
                 wireRuntimeCallbacks()
-                MisMeeterRuntime.shared.gainDB = Float(gainDB)
+                MisMeeterRuntime.shared.gainDB =
+                    Float(gainDB)
 
                 Task {
                     await MisMeeterRuntime.shared
                         .cleanupOrphanedLiveActivitiesIfIdle()
                 }
 
-                switch scenePhase {
-                case .active:
-                    MisMeeterRuntime.shared.enterForegroundTransport()
-                case .inactive:
-                    MisMeeterRuntime.shared.beginLockTransition()
-                case .background:
-                    MisMeeterRuntime.shared.enterBackgroundTransport()
-                @unknown default:
-                    break
-                }
+                updateScenePhase(scenePhase)
             }
-            .onChange(of: scenePhase) { _, newPhase in
-                switch newPhase {
-                case .active:
-                    MisMeeterRuntime.shared.enterForegroundTransport()
-
-                case .inactive:
-                    // Keep batch=1 while iOS is transitioning to lock/background.
-                    MisMeeterRuntime.shared.beginLockTransition()
-
-                case .background:
-                    // Only now enable background batching.
-                    MisMeeterRuntime.shared.enterBackgroundTransport()
-
-                @unknown default:
-                    break
-                }
+            .onChange(
+                of: scenePhase
+            ) { _, phase in
+                updateScenePhase(phase)
             }
         }
     }
 
+    // MARK: - TX UI
+
+    private var txSection: some View {
+        Section("MIC → VBAN") {
+            Picker(
+                "TX preset",
+                selection: $selectedTXPreset
+            ) {
+                Text(
+                    p1Name.isEmpty
+                    ? "Preset 1"
+                    : p1Name
+                ).tag(0)
+
+                Text(
+                    p2Name.isEmpty
+                    ? "Preset 2"
+                    : p2Name
+                ).tag(1)
+
+                Text(
+                    p3Name.isEmpty
+                    ? "Preset 3"
+                    : p3Name
+                ).tag(2)
+            }
+            .pickerStyle(.segmented)
+            .disabled(isStreaming)
+
+            txPresetEditor
+
+            Toggle(
+                "Apple Voice Processing",
+                isOn: $appleVoiceProcessing
+            )
+            .disabled(isStreaming)
+
+            HStack {
+                Image(
+                    systemName:
+                        isMuted
+                        ? "mic.slash.fill"
+                        : "mic.fill"
+                )
+
+                VStack(
+                    alignment: .leading
+                ) {
+                    Text(
+                        isMuted
+                        ? "Microphone muted"
+                        : "Microphone live"
+                    )
+
+                    ProgressView(
+                        value: Double(meter)
+                    )
+                }
+            }
+
+            VStack {
+                HStack {
+                    Text("Mic gain")
+                    Spacer()
+                    Text("+\(Int(gainDB)) dB")
+                }
+
+                Slider(
+                    value: $gainDB,
+                    in: 0...24,
+                    step: 1
+                )
+                .onChange(
+                    of: gainDB
+                ) { _, value in
+                    MisMeeterRuntime.shared
+                        .gainDB = Float(value)
+                }
+            }
+
+            Button {
+                isMuted =
+                    MisMeeterRuntime.shared
+                        .toggleMuted()
+
+                Task {
+                    await MisMeeterRuntime.shared
+                        .syncLiveActivity()
+                }
+            } label: {
+                Label(
+                    isMuted
+                    ? "Unmute mic"
+                    : "Mute mic",
+                    systemImage:
+                        isMuted
+                        ? "mic.fill"
+                        : "mic.slash.fill"
+                )
+            }
+            .disabled(!isStreaming)
+
+            Button {
+                Task {
+                    if isStreaming {
+                        await stopTX()
+                    } else {
+                        await startTX()
+                    }
+                }
+            } label: {
+                Label(
+                    isStreaming
+                    ? "Stop Mic TX"
+                    : "Start Mic TX",
+                    systemImage:
+                        isStreaming
+                        ? "stop.fill"
+                        : "dot.radiowaves.left.and.right"
+                )
+                .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+
+            Text(txStatus)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
     @ViewBuilder
-    private var presetEditor: some View {
-        switch selectedPreset {
+    private var txPresetEditor: some View {
+        switch selectedTXPreset {
         case 1:
-            presetFields(
+            txPresetFields(
                 name: $p2Name,
                 host: $p2Host,
                 port: $p2Port,
                 stream: $p2Stream
             )
         case 2:
-            presetFields(
+            txPresetFields(
                 name: $p3Name,
                 host: $p3Host,
                 port: $p3Port,
                 stream: $p3Stream
             )
         default:
-            presetFields(
+            txPresetFields(
                 name: $p1Name,
                 host: $p1Host,
                 port: $p1Port,
@@ -280,226 +294,649 @@ struct ContentView: View {
     }
 
     @ViewBuilder
-    private func presetFields(
+    private func txPresetFields(
         name: Binding<String>,
         host: Binding<String>,
         port: Binding<String>,
         stream: Binding<String>
     ) -> some View {
-        TextField("Preset name", text: name)
-            .disabled(isStreaming)
+        TextField(
+            "Preset name",
+            text: name
+        )
+        .disabled(isStreaming)
 
-        TextField("PC IPv4 / hostname", text: host)
-            .textInputAutocapitalization(.never)
-            .keyboardType(.numbersAndPunctuation)
-            .disabled(isStreaming)
+        TextField(
+            "PC IPv4",
+            text: host
+        )
+        .textInputAutocapitalization(.never)
+        .keyboardType(.numbersAndPunctuation)
+        .disabled(isStreaming)
 
-        TextField("UDP port", text: port)
-            .keyboardType(.numberPad)
-            .disabled(isStreaming)
+        TextField(
+            "UDP port",
+            text: port
+        )
+        .keyboardType(.numberPad)
+        .disabled(isStreaming)
 
-        TextField("VBAN stream name", text: stream)
-            .textInputAutocapitalization(.never)
-            .disabled(isStreaming)
-
-        Text("VBAN stream names are limited to 16 ASCII characters.")
-            .font(.caption)
-            .foregroundStyle(.secondary)
+        TextField(
+            "VBAN stream",
+            text: stream
+        )
+        .textInputAutocapitalization(.never)
+        .disabled(isStreaming)
     }
 
-    private var currentPreset: VBANPreset {
-        switch selectedPreset {
+    // MARK: - RX UI
+
+    private var rxSection: some View {
+        Section("VBAN → iPhone") {
+            Picker(
+                "RX preset",
+                selection: $selectedRXPreset
+            ) {
+                Text(
+                    rx1Name.isEmpty
+                    ? "RX 1"
+                    : rx1Name
+                ).tag(0)
+
+                Text(
+                    rx2Name.isEmpty
+                    ? "RX 2"
+                    : rx2Name
+                ).tag(1)
+
+                Text(
+                    rx3Name.isEmpty
+                    ? "RX 3"
+                    : rx3Name
+                ).tag(2)
+            }
+            .pickerStyle(.segmented)
+            .disabled(isReceiving)
+
+            rxPresetEditor
+
+            Button {
+                if isReceiving {
+                    stopRX()
+                } else {
+                    startRX()
+                }
+            } label: {
+                Label(
+                    isReceiving
+                    ? "Stop Listening"
+                    : "Start Listening",
+                    systemImage:
+                        isReceiving
+                        ? "speaker.slash.fill"
+                        : "speaker.wave.3.fill"
+                )
+                .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+
+            Text(rxStatus)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            if isReceiving {
+                LabeledContent(
+                    "Buffered",
+                    value:
+                        String(
+                            format:
+                                "%.0f ms",
+                            Double(
+                                rxBufferedFrames
+                            ) /
+                            VBANPacket.sampleRate *
+                            1000
+                        )
+                )
+
+                LabeledContent(
+                    "Primed",
+                    value:
+                        rxPrimed
+                        ? "Yes"
+                        : "Buffering…"
+                )
+
+                LabeledContent(
+                    "Packets",
+                    value: "\(rxPackets)"
+                )
+
+                LabeledContent(
+                    "Lost frames",
+                    value: "\(rxLost)"
+                )
+
+                LabeledContent(
+                    "Playback underflows",
+                    value: "\(rxUnderflows)"
+                )
+            }
+
+            Text(
+                "Configure VoiceMeeter VBAN OUT to the iPhone's LAN IPv4, " +
+                "the selected UDP port and the exact same stream name. " +
+                "Receiver supports 48 kHz PCM16 mono/stereo."
+            )
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
+    }
+
+    @ViewBuilder
+    private var rxPresetEditor: some View {
+        switch selectedRXPreset {
         case 1:
-            return makePreset(
+            rxPresetFields(
+                name: $rx2Name,
+                port: $rx2Port,
+                stream: $rx2Stream,
+                buffer: $rx2Buffer
+            )
+        case 2:
+            rxPresetFields(
+                name: $rx3Name,
+                port: $rx3Port,
+                stream: $rx3Stream,
+                buffer: $rx3Buffer
+            )
+        default:
+            rxPresetFields(
+                name: $rx1Name,
+                port: $rx1Port,
+                stream: $rx1Stream,
+                buffer: $rx1Buffer
+            )
+        }
+    }
+
+    @ViewBuilder
+    private func rxPresetFields(
+        name: Binding<String>,
+        port: Binding<String>,
+        stream: Binding<String>,
+        buffer: Binding<Double>
+    ) -> some View {
+        TextField(
+            "Preset name",
+            text: name
+        )
+        .disabled(isReceiving)
+
+        TextField(
+            "Listen UDP port",
+            text: port
+        )
+        .keyboardType(.numberPad)
+        .disabled(isReceiving)
+
+        TextField(
+            "VBAN stream",
+            text: stream
+        )
+        .textInputAutocapitalization(.never)
+        .disabled(isReceiving)
+
+        VStack(
+            alignment: .leading
+        ) {
+            HStack {
+                Text("Jitter buffer")
+                Spacer()
+                Text(
+                    "\(Int(buffer.wrappedValue)) ms"
+                )
+            }
+
+            Slider(
+                value: buffer,
+                in: 40...300,
+                step: 10
+            )
+            .disabled(isReceiving)
+        }
+    }
+
+    // MARK: - Diagnostics
+
+    private var diagnosticsSection: some View {
+        Section("Diagnostics") {
+            if isStreaming {
+                LabeledContent(
+                    "TX callback",
+                    value:
+                        "\(callbackFrames) frames"
+                )
+
+                LabeledContent(
+                    "TX I/O",
+                    value:
+                        String(
+                            format:
+                                "%.2f ms",
+                            actualIOBufferMS
+                        )
+                )
+
+                LabeledContent(
+                    "Capture",
+                    value:
+                        String(
+                            format:
+                                "%.1f Hz",
+                            measuredCaptureHz
+                        )
+                )
+
+                LabeledContent(
+                    "TX rate",
+                    value:
+                        String(
+                            format:
+                                "%.1f Hz",
+                            effectiveTXHz
+                        )
+                )
+
+                LabeledContent(
+                    "TX max gap",
+                    value:
+                        String(
+                            format:
+                                "%.2f ms",
+                            maxSendGapMS
+                        )
+                )
+
+                LabeledContent(
+                    "TX send errors",
+                    value: "\(sendErrors)"
+                )
+
+                LabeledContent(
+                    "TX packets",
+                    value: "\(packetsSent)"
+                )
+            }
+
+            if isReceiving {
+                LabeledContent(
+                    "RX rejected",
+                    value: "\(rxRejected)"
+                )
+            }
+
+            if !isStreaming &&
+                !isReceiving {
+                Text(
+                    "TX and RX are both stopped."
+                )
+                .foregroundStyle(.secondary)
+            }
+
+            Text(
+                "Mic TX and speaker RX are independent: either can run alone, " +
+                "or both can run at the same time."
+            )
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
+    }
+
+    // MARK: - Preset models
+
+    private var currentTXPreset: VBANPreset {
+        switch selectedTXPreset {
+        case 1:
+            return makeTXPreset(
                 name: p2Name,
                 host: p2Host,
                 portText: p2Port,
                 stream: p2Stream,
-                fallbackName: "Preset 2"
+                fallback:
+                    "Preset 2"
             )
         case 2:
-            return makePreset(
+            return makeTXPreset(
                 name: p3Name,
                 host: p3Host,
                 portText: p3Port,
                 stream: p3Stream,
-                fallbackName: "Preset 3"
+                fallback:
+                    "Preset 3"
             )
         default:
-            return makePreset(
+            return makeTXPreset(
                 name: p1Name,
                 host: p1Host,
                 portText: p1Port,
                 stream: p1Stream,
-                fallbackName: "Preset 1"
+                fallback:
+                    "Preset 1"
             )
         }
     }
 
-    private func makePreset(
+    private var currentRXPreset:
+        VBANReceivePreset {
+        switch selectedRXPreset {
+        case 1:
+            return makeRXPreset(
+                name: rx2Name,
+                portText: rx2Port,
+                stream: rx2Stream,
+                buffer: rx2Buffer,
+                fallback: "RX 2"
+            )
+        case 2:
+            return makeRXPreset(
+                name: rx3Name,
+                portText: rx3Port,
+                stream: rx3Stream,
+                buffer: rx3Buffer,
+                fallback: "RX 3"
+            )
+        default:
+            return makeRXPreset(
+                name: rx1Name,
+                portText: rx1Port,
+                stream: rx1Stream,
+                buffer: rx1Buffer,
+                fallback: "RX 1"
+            )
+        }
+    }
+
+    private func makeTXPreset(
         name: String,
         host: String,
         portText: String,
         stream: String,
-        fallbackName: String
+        fallback: String
     ) -> VBANPreset {
         VBANPreset(
-            name: name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                ? fallbackName
+            name:
+                name.isEmpty
+                ? fallback
                 : name,
-            host: host.trimmingCharacters(in: .whitespacesAndNewlines),
-            port: UInt16(portText) ?? 6980,
-            streamName: stream.trimmingCharacters(in: .whitespacesAndNewlines)
+            host:
+                host.trimmingCharacters(
+                    in:
+                        .whitespacesAndNewlines
+                ),
+            port:
+                UInt16(portText)
+                ?? 6980,
+            streamName:
+                stream
         )
     }
 
-    private func wireRuntimeCallbacks() {
-        MisMeeterRuntime.shared.onStatusChange = { value in
-            DispatchQueue.main.async {
-                status = value
-            }
-        }
-
-        MisMeeterRuntime.shared.onMeter = { value in
-            DispatchQueue.main.async {
-                meter = isMuted ? 0 : value
-            }
-        }
-
-        MisMeeterRuntime.shared.onBufferLevel = { value in
-            DispatchQueue.main.async {
-                bufferSamples = value
-            }
-        }
-
-        MisMeeterRuntime.shared.onAudioDiagnostics = { frames, duration in
-            DispatchQueue.main.async {
-                callbackFrames = frames
-                actualIOBufferMS = duration * 1000
-            }
-        }
-
-        MisMeeterRuntime.shared.onUnderruns = { value in
-            DispatchQueue.main.async {
-                underruns = value
-            }
-        }
-
-        MisMeeterRuntime.shared.onPacketsSent = { value in
-            DispatchQueue.main.async {
-                packetsSent = value
-            }
-        }
-
-        MisMeeterRuntime.shared.onPrimedChange = { value in
-            DispatchQueue.main.async { senderPrimed = value }
-        }
-        MisMeeterRuntime.shared.onPLLStats = { targetMS, captureHz, txHz, lateMS, catchUps in
-            DispatchQueue.main.async {
-                adaptiveLatencyMS = targetMS
-                measuredCaptureHz = captureHz
-                effectiveTXHz = txHz
-                schedulerLateMS = lateMS
-                catchUpPackets = catchUps
-            }
-        }
-
-        MisMeeterRuntime.shared.onVoiceProcessingState = { enabled in
-            DispatchQueue.main.async {
-                voiceProcessingActive = enabled
-            }
-        }
-
-        MisMeeterRuntime.shared.onTransportMode = { state, batchSize, bufferedSamples, maxGapMS in
-            DispatchQueue.main.async {
-                transportState = state
-                currentBatchSize = batchSize
-                backgroundBufferedSamples = bufferedSamples
-                maxSendGapMS = maxGapMS
-            }
-        }
+    private func makeRXPreset(
+        name: String,
+        portText: String,
+        stream: String,
+        buffer: Double,
+        fallback: String
+    ) -> VBANReceivePreset {
+        VBANReceivePreset(
+            name:
+                name.isEmpty
+                ? fallback
+                : name,
+            port:
+                UInt16(portText)
+                ?? 6980,
+            streamName: stream,
+            bufferMS: buffer
+        )
     }
 
-    private func startStreaming() async {
-        let preset = currentPreset
+    // MARK: - Actions
+
+    private func startTX() async {
+        let preset =
+            currentTXPreset
 
         guard !preset.host.isEmpty else {
-            status = "Enter the Windows PC IPv4 address."
+            txStatus =
+                "Enter PC IPv4."
             return
         }
 
-        guard !preset.streamName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            status = "Enter a VBAN stream name."
-            return
-        }
+        let granted =
+            await requestMicrophonePermission()
 
-        let granted = await requestMicrophonePermission()
         guard granted else {
-            status = "Microphone permission denied."
+            txStatus =
+                "Microphone permission denied."
             return
         }
 
         do {
-            let mode = VBANTransmissionMode(
-                rawValue: transmissionModeRaw
-            ) ?? .balanced
+            let mode =
+                VBANTransmissionMode(
+                    rawValue:
+                        transmissionModeRaw
+                ) ?? .automatic
 
-            try await MisMeeterRuntime.shared.start(
-                preset: preset,
-                gainDB: Float(gainDB),
-                transmissionMode: mode,
-                voiceProcessingEnabled: appleVoiceProcessing
-            )
+            try await MisMeeterRuntime.shared
+                .start(
+                    preset: preset,
+                    gainDB: Float(gainDB),
+                    transmissionMode: mode,
+                    voiceProcessingEnabled:
+                        appleVoiceProcessing
+                )
 
             isStreaming = true
             isMuted = false
-            status = "Streaming VBAN"
+            txStatus = "Streaming VBAN"
         } catch {
-            status = error.localizedDescription
-            isStreaming = false
+            txStatus =
+                error.localizedDescription
         }
     }
 
-    private func stopStreaming() async {
-        await MisMeeterRuntime.shared.stop()
+    private func stopTX() async {
+        await MisMeeterRuntime.shared
+            .stop()
 
         await MainActor.run {
             isStreaming = false
-            isMuted = MisMeeterRuntime.shared.isMuted
             meter = 0
-            bufferSamples = 0
-            packetsSent = 0
-            callbackFrames = 0
-            actualIOBufferMS = 0
-            underruns = 0
-            senderPrimed = false
-            adaptiveLatencyMS = 0
-            measuredCaptureHz = 48000
-            effectiveTXHz = 48000
-            schedulerLateMS = 0
-            catchUpPackets = 0
-            voiceProcessingActive = false
-            transportState = .foregroundRealtime
-            currentBatchSize = 1
-            backgroundBufferedSamples = 0
-            maxSendGapMS = 0
-            status = "Stopped"
+            txStatus = "TX stopped"
         }
     }
 
-    private func toggleMuteFromApp() {
-        isMuted = MisMeeterRuntime.shared.toggleMuted()
+    private func startRX() {
+        do {
+            try MisMeeterRuntime.shared
+                .startReceiving(
+                    preset:
+                        currentRXPreset
+                )
 
-        Task {
-            await MisMeeterRuntime.shared.syncLiveActivity()
+            isReceiving = true
+            rxStatus =
+                "Listening for \(currentRXPreset.sanitizedStreamName)"
+        } catch {
+            rxStatus =
+                error.localizedDescription
         }
     }
 
-    private func requestMicrophonePermission() async -> Bool {
-        await withCheckedContinuation { continuation in
-            AVAudioSession.sharedInstance().requestRecordPermission { granted in
-                continuation.resume(returning: granted)
+    private func stopRX() {
+        MisMeeterRuntime.shared
+            .stopReceiving()
+
+        isReceiving = false
+        rxStatus = "RX stopped"
+        rxBufferedFrames = 0
+        rxPrimed = false
+    }
+
+    private func requestMicrophonePermission()
+        async -> Bool {
+        await withCheckedContinuation {
+            continuation in
+
+            AVAudioSession.sharedInstance()
+                .requestRecordPermission {
+                    granted in
+
+                    continuation.resume(
+                        returning: granted
+                    )
+                }
+        }
+    }
+
+    // MARK: - Runtime callbacks
+
+    private func wireRuntimeCallbacks() {
+        MisMeeterRuntime.shared
+            .onStatusChange = { value in
+                DispatchQueue.main.async {
+                    txStatus = value
+                }
             }
+
+        MisMeeterRuntime.shared
+            .onMeter = { value in
+                DispatchQueue.main.async {
+                    meter =
+                        isMuted
+                        ? 0
+                        : value
+                }
+            }
+
+        MisMeeterRuntime.shared
+            .onPacketsSent = { value in
+                DispatchQueue.main.async {
+                    packetsSent = value
+                }
+            }
+
+        MisMeeterRuntime.shared
+            .onUnderruns = { value in
+                DispatchQueue.main.async {
+                    sendErrors = value
+                }
+            }
+
+        MisMeeterRuntime.shared
+            .onAudioDiagnostics = {
+                frames,
+                duration in
+
+                DispatchQueue.main.async {
+                    callbackFrames =
+                        frames
+                    actualIOBufferMS =
+                        duration * 1000
+                }
+            }
+
+        MisMeeterRuntime.shared
+            .onPLLStats = {
+                _,
+                captureHz,
+                txHz,
+                _,
+                _ in
+
+                DispatchQueue.main.async {
+                    measuredCaptureHz =
+                        captureHz
+                    effectiveTXHz =
+                        txHz
+                }
+            }
+
+        MisMeeterRuntime.shared
+            .onTransportMode = {
+                _,
+                _,
+                _,
+                gapMS in
+
+                DispatchQueue.main.async {
+                    maxSendGapMS =
+                        gapMS
+                }
+            }
+
+        MisMeeterRuntime.shared
+            .onVoiceProcessingState = {
+                enabled in
+
+                DispatchQueue.main.async {
+                    voiceProcessingActive =
+                        enabled
+                }
+            }
+
+        MisMeeterRuntime.shared
+            .onReceiverStatus = {
+                value in
+
+                DispatchQueue.main.async {
+                    rxStatus = value
+                }
+            }
+
+        MisMeeterRuntime.shared
+            .onReceiverDiagnostics = {
+                received,
+                rejected,
+                lost,
+                buffered,
+                underflows,
+                primed in
+
+                DispatchQueue.main.async {
+                    rxPackets = received
+                    rxRejected = rejected
+                    rxLost = lost
+                    rxBufferedFrames =
+                        buffered
+                    rxUnderflows =
+                        underflows
+                    rxPrimed = primed
+                }
+            }
+    }
+
+    private func updateScenePhase(
+        _ phase: ScenePhase
+    ) {
+        switch phase {
+        case .active:
+            MisMeeterRuntime.shared
+                .enterForegroundTransport()
+
+        case .inactive:
+            MisMeeterRuntime.shared
+                .beginLockTransition()
+
+        case .background:
+            MisMeeterRuntime.shared
+                .enterBackgroundTransport()
+
+        @unknown default:
+            break
         }
     }
 }

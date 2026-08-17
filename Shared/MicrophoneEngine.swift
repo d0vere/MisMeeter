@@ -66,10 +66,12 @@ final class MicrophoneEngine {
                 options: [.defaultToSpeaker]
             )
         } else {
+            // playAndRecord keeps the output path available so the independent
+            // VBAN receiver can play through the iPhone speaker while TX is active.
             try session.setCategory(
-                .record,
+                .playAndRecord,
                 mode: .default,
-                options: []
+                options: [.defaultToSpeaker]
             )
         }
 
@@ -127,7 +129,7 @@ final class MicrophoneEngine {
         try engine.start()
     }
 
-    func stop() {
+    func stop(deactivateSession: Bool = true) {
         engine.stop()
 
         if let sink = sinkNode {
@@ -136,13 +138,15 @@ final class MicrophoneEngine {
             sinkNode = nil
         }
 
-        do {
-            try AVAudioSession.sharedInstance().setActive(
-                false,
-                options: [.notifyOthersOnDeactivation]
-            )
-        } catch {
-            print("MISMEETER: session deactivate error: \(error)")
+        if deactivateSession {
+            do {
+                try AVAudioSession.sharedInstance().setActive(
+                    false,
+                    options: [.notifyOthersOnDeactivation]
+                )
+            } catch {
+                print("MISMEETER: session deactivate error: \(error)")
+            }
         }
     }
 

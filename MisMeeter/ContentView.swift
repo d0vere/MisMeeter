@@ -39,6 +39,7 @@ struct ContentView: View {
     @State private var isStreaming = MisMeeterRuntime.shared.isStreaming
     @State private var isMuted = MisMeeterRuntime.shared.isMuted
     @State private var isReceiving = MisMeeterRuntime.shared.isReceiving
+    @State private var isReceiveMuted = MisMeeterRuntime.shared.isReceiveMuted
     @State private var txStatus = "Ready"
     @State private var rxStatus = "Ready"
     @State private var meter: Float = 0
@@ -63,23 +64,24 @@ struct ContentView: View {
 
     var body: some View {
         ZStack(alignment: .bottom) {
-            Group {
-                switch selectedTab {
-                case .transmit:
-                    NavigationStack { txHomeView }
-                case .receive:
-                    NavigationStack { rxHomeView }
-                case .presets:
-                    NavigationStack { presetsView }
-                case .settings:
-                    NavigationStack { settingsView }
-                }
+            TabView(selection: $selectedTab) {
+                NavigationStack { txHomeView }
+                    .tag(AppSection.transmit)
+
+                NavigationStack { rxHomeView }
+                    .tag(AppSection.receive)
+
+                NavigationStack { presetsView }
+                    .tag(AppSection.presets)
+
+                NavigationStack { settingsView }
+                    .tag(AppSection.settings)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .tabViewStyle(.page(indexDisplayMode: .never))
+            .ignoresSafeArea(.keyboard, edges: .bottom)
 
             if !isEditingPreset {
                 floatingNavigation
-                    .padding(.horizontal, 18)
                     .padding(.bottom, 8)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
@@ -120,7 +122,7 @@ struct ContentView: View {
     }
 
     private var floatingNavigation: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 4) {
             ForEach(AppSection.allCases) { item in
                 Button {
                     withAnimation(.smooth(duration: 0.24)) { selectedTab = item }
@@ -129,26 +131,24 @@ struct ContentView: View {
                         Image(systemName: item.icon)
                             .font(.system(size: 16, weight: .semibold))
                         Text(item.title)
-                            .font(.system(size: 10, weight: .semibold))
+                            .font(.system(size: 9.5, weight: .semibold))
+                            .lineLimit(1)
                     }
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 9)
+                    .frame(width: 54, height: 48)
                     .foregroundStyle(selectedTab == item ? Color.primary : Color.secondary)
                     .background {
                         if selectedTab == item {
                             Capsule()
-                                .fill(.thinMaterial)
-                                .overlay(Capsule().stroke(.primary.opacity(0.08), lineWidth: 0.6))
+                                .fill(Color.primary.opacity(0.075))
                         }
                     }
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
             }
         }
-        .padding(7)
-        .background(.ultraThinMaterial, in: Capsule())
-        .overlay(Capsule().stroke(.primary.opacity(0.10), lineWidth: 0.7))
-        .shadow(color: .black.opacity(0.10), radius: 18, y: 8)
+        .padding(5)
+        .glassEffect()
     }
 
     private var txHomeView: some View {
@@ -167,11 +167,6 @@ struct ContentView: View {
         }
         .background(appBackground)
         .navigationTitle("MisMeeter")
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Button { selectedTab = .settings } label: { Image(systemName: "gearshape") }
-            }
-        }
     }
 
     private var heroCard: some View {
@@ -304,7 +299,7 @@ struct ContentView: View {
         VStack(spacing: 18) {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 5) {
-                    Text(isReceiving ? "Listening" : "Ready to listen")
+                    Text(isReceiving ? (isReceiveMuted ? "Receive muted" : "Listening") : "Ready to listen")
                         .font(.title2.weight(.bold))
                     Text("\(currentRXPreset.name) · \(currentRXPreset.streamName)")
                         .font(.subheadline)
@@ -313,8 +308,8 @@ struct ContentView: View {
                 }
                 Spacer()
                 HStack(spacing: 6) {
-                    Circle().fill(isReceiving ? Color.green : Color.secondary).frame(width: 8, height: 8)
-                    Text(isReceiving ? "LIVE" : "IDLE").font(.caption2.weight(.bold))
+                    Circle().fill(isReceiving ? (isReceiveMuted ? Color.red : Color.green) : Color.secondary).frame(width: 8, height: 8)
+                    Text(isReceiving ? (isReceiveMuted ? "MUTED" : "LIVE") : "IDLE").font(.caption2.weight(.bold))
                 }
                 .padding(.horizontal, 10)
                 .padding(.vertical, 7)
@@ -325,25 +320,46 @@ struct ContentView: View {
                 Circle().stroke(.primary.opacity(0.08), lineWidth: 14).frame(width: 148, height: 148)
                 Circle()
                     .trim(from: 0, to: isReceiving ? 0.82 : 0.06)
-                    .stroke(isReceiving ? Color.green : Color.secondary, style: StrokeStyle(lineWidth: 14, lineCap: .round))
+                    .stroke(isReceiving ? (isReceiveMuted ? Color.red : Color.green) : Color.secondary, style: StrokeStyle(lineWidth: 14, lineCap: .round))
                     .rotationEffect(.degrees(-90))
                     .frame(width: 148, height: 148)
-                Image(systemName: isReceiving ? "speaker.wave.3.fill" : "ear")
+                Image(systemName: isReceiving ? (isReceiveMuted ? "speaker.slash.fill" : "speaker.wave.3.fill") : "ear")
                     .font(.system(size: 42, weight: .semibold))
-                    .foregroundStyle(isReceiving ? .green : .primary)
+                    .foregroundStyle(isReceiving ? (isReceiveMuted ? .red : .green) : .primary)
                     .contentTransition(.symbolEffect(.replace))
             }
 
-            Button {
-                isReceiving ? stopRX() : startRX()
-            } label: {
-                Label(isReceiving ? "Stop listening" : "Start receiving audio", systemImage: isReceiving ? "stop.fill" : "ear")
-                    .font(.headline)
-                    .frame(maxWidth: .infinity)
+            if isReceiving {
+                HStack(spacing: 12) {
+                    Button {
+                        isReceiveMuted = MisMeeterRuntime.shared.toggleReceiveMuted()
+                    } label: {
+                        Label(isReceiveMuted ? "Audio on" : "Mute RX", systemImage: isReceiveMuted ? "speaker.wave.2.fill" : "speaker.slash.fill")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
+
+                    Button(role: .destructive) {
+                        stopRX()
+                    } label: {
+                        Label("Stop", systemImage: "stop.fill")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.large)
+                }
+            } else {
+                Button {
+                    startRX()
+                } label: {
+                    Label("Start receiving audio", systemImage: "ear")
+                        .font(.headline)
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
             }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.large)
-            .tint(isReceiving ? .red : .accentColor)
         }
         .padding(20)
         .glassCard()
@@ -405,7 +421,7 @@ struct ContentView: View {
         VStack(alignment: .leading, spacing: 12) {
             Label("System surfaces", systemImage: "platter.filled.top.and.arrow.up.iphone")
                 .font(.headline)
-            Text("Dynamic Island stays intentionally compact: only the microphone indicator is visible while streaming. Controls appear when the Live Activity is expanded or on the Lock Screen widget.")
+            Text("Dynamic Island stays compact and symmetric: receive audio appears on the left, microphone TX on the right. Long-press reveals large RX mute, microphone mute and Stop All controls.")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
             HStack(spacing: 8) {
@@ -538,17 +554,17 @@ struct ContentView: View {
             }
 
             Section("System surfaces") {
-                Label("Compact Dynamic Island microphone indicator", systemImage: "capsule.fill")
+                Label("Dynamic Island TX + RX indicators", systemImage: "capsule.fill")
                 Label("Home & Lock Screen Widget", systemImage: "square.grid.2x2.fill")
-                Text("Mute and Stop synchronize through the shared App Group control channel and the app reconciles state every time it returns to the foreground.")
+                Text("Receive mute, microphone mute and Stop All synchronize through the shared App Group control channel and reconcile whenever the app returns to foreground.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
 
             Section("About") {
-                LabeledContent("Version", value: "3.1.0")
+                LabeledContent("Version", value: "3.2.0")
                 LabeledContent("Audio", value: "48 kHz / PCM16 / VBAN")
-                LabeledContent("Minimum iOS", value: "17.0")
+                LabeledContent("Minimum iOS", value: "26.6")
                 LabeledContent("Optimized SDK", value: "iOS 26 / Xcode 26.6")
             }
         }
@@ -622,6 +638,7 @@ struct ContentView: View {
         isStreaming = runtime.isStreaming
         isMuted = runtime.isStreaming ? runtime.isMuted : false
         isReceiving = runtime.isReceiving
+        isReceiveMuted = runtime.isReceiving ? runtime.isReceiveMuted : false
         meter = runtime.isStreaming ? meter : 0
 
         if runtime.isStreaming {
@@ -631,7 +648,7 @@ struct ContentView: View {
         }
 
         if runtime.isReceiving {
-            rxStatus = "Listening"
+            rxStatus = runtime.isReceiveMuted ? "Receive muted" : "Listening"
         } else {
             rxStatus = "Ready"
         }
@@ -744,10 +761,6 @@ private enum AppSection: String, CaseIterable, Identifiable {
 private extension View {
     func glassCard() -> some View {
         self
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 26, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 26, style: .continuous)
-                    .stroke(.primary.opacity(0.07), lineWidth: 0.7)
-            }
+            .glassEffect(in: RoundedRectangle(cornerRadius: 26, style: .continuous))
     }
 }

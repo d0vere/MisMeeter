@@ -56,6 +56,7 @@ final class VBANReceiver {
     private var currentRate: Float = 1.0
 
     private(set) var isRunning = false
+    private(set) var isOutputMuted = false
 
     var onStatus: ((String) -> Void)?
 
@@ -184,6 +185,8 @@ final class VBANReceiver {
             format: format
         )
 
+        engine.mainMixerNode.outputVolume = 1.0
+        isOutputMuted = false
         engine.prepare()
         try engine.start()
 
@@ -222,6 +225,7 @@ final class VBANReceiver {
         deactivateSession: Bool
     ) {
         isRunning = false
+        isOutputMuted = false
 
         controlTimer?.setEventHandler {}
         controlTimer?.cancel()
@@ -263,6 +267,23 @@ final class VBANReceiver {
         }
 
         onStatus?("Receiver stopped")
+    }
+
+
+    @discardableResult
+    func toggleOutputMuted() -> Bool {
+        setOutputMuted(!isOutputMuted)
+        return isOutputMuted
+    }
+
+    func setOutputMuted(_ muted: Bool) {
+        guard isRunning else {
+            isOutputMuted = false
+            return
+        }
+        isOutputMuted = muted
+        engine.mainMixerNode.outputVolume = muted ? 0.0 : 1.0
+        onStatus?(muted ? "Receive muted" : "Listening • \(expectedStreamName) • UDP \(listenPort)")
     }
 
     private func startClockRecovery() {

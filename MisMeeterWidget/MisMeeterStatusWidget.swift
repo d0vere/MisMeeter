@@ -14,6 +14,7 @@ private struct MisMeeterProvider: TimelineProvider {
                 isStreaming: true,
                 isMuted: false,
                 isReceiving: true,
+                isReceiveMuted: false,
                 presetName: "Studio",
                 destination: "192.168.1.40:6980",
                 streamName: "MisMeeter",
@@ -42,7 +43,7 @@ struct MisMeeterStatusWidget: Widget {
                 .containerBackground(for: .widget) { Color.clear }
         }
         .configurationDisplayName("MisMeeter Control")
-        .description("Monitor the active VBAN stream and control the microphone.")
+        .description("Monitor and control MisMeeter transmit and receive audio.")
         .supportedFamilies([.systemSmall, .systemMedium, .accessoryCircular, .accessoryRectangular])
     }
 }
@@ -50,6 +51,8 @@ struct MisMeeterStatusWidget: Widget {
 private struct MisMeeterWidgetView: View {
     @Environment(\.widgetFamily) private var family
     let entry: MisMeeterEntry
+
+    private var isActive: Bool { entry.state.isStreaming || entry.state.isReceiving }
 
     var body: some View {
         switch family {
@@ -65,40 +68,46 @@ private struct MisMeeterWidgetView: View {
     }
 
     private var small: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Image(systemName: entry.state.isMuted ? "mic.slash.fill" : "waveform.circle.fill")
-                    .font(.title2)
-                    .foregroundStyle(entry.state.isMuted ? .red : (entry.state.isStreaming ? .green : .secondary))
-                    .widgetAccentable()
+        VStack(alignment: .leading, spacing: 9) {
+            HStack(spacing: 8) {
+                statusIcon(systemImage: entry.state.isReceiveMuted ? "speaker.slash.fill" : "speaker.wave.2.fill", active: entry.state.isReceiving, muted: entry.state.isReceiveMuted)
+                statusIcon(systemImage: entry.state.isMuted ? "mic.slash.fill" : "mic.fill", active: entry.state.isStreaming, muted: entry.state.isMuted)
                 Spacer()
-                Text(entry.state.isStreaming ? "LIVE" : "READY")
+                Text(isActive ? "LIVE" : "READY")
                     .font(.caption2.weight(.bold))
                     .foregroundStyle(.secondary)
             }
 
             Spacer(minLength: 0)
-            Text(entry.state.presetName)
+            Text(entry.state.status)
                 .font(.headline)
                 .lineLimit(1)
-            Text(entry.state.destination)
+            Text(entry.state.presetName)
                 .font(.caption2)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
 
-            if entry.state.isStreaming {
-                HStack(spacing: 8) {
+            if isActive {
+                HStack(spacing: 6) {
+                    Button(intent: ToggleReceiveMuteIntent()) {
+                        Image(systemName: entry.state.isReceiveMuted ? "speaker.wave.2.fill" : "speaker.slash.fill")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(!entry.state.isReceiving)
+
                     Button(intent: ToggleMuteIntent()) {
                         Image(systemName: entry.state.isMuted ? "mic.fill" : "mic.slash.fill")
                             .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.borderedProminent)
+                    .disabled(!entry.state.isStreaming)
 
                     Button(intent: EndLiveActivityIntent()) {
                         Image(systemName: "stop.fill")
                             .frame(maxWidth: .infinity)
                     }
-                    .buttonStyle(.bordered)
+                    .buttonStyle(.borderedProminent)
                     .tint(.red)
                 }
             } else {
@@ -114,41 +123,49 @@ private struct MisMeeterWidgetView: View {
     private var medium: some View {
         HStack(spacing: 14) {
             VStack(alignment: .leading, spacing: 7) {
-                Label("MisMeeter", systemImage: "waveform.circle.fill")
-                    .font(.headline)
-                    .widgetAccentable()
-                Text(entry.state.isStreaming ? (entry.state.isMuted ? "Microphone muted" : "Streaming") : "Ready to stream")
+                HStack(spacing: 8) {
+                    statusIcon(systemImage: entry.state.isReceiveMuted ? "speaker.slash.fill" : "speaker.wave.2.fill", active: entry.state.isReceiving, muted: entry.state.isReceiveMuted)
+                    statusIcon(systemImage: entry.state.isMuted ? "mic.slash.fill" : "mic.fill", active: entry.state.isStreaming, muted: entry.state.isMuted)
+                    Text("MisMeeter")
+                        .font(.headline)
+                }
+                Text(isActive ? entry.state.status : "Ready")
                     .font(.title3.weight(.semibold))
                 Text(entry.state.destination)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
-                if let start = entry.state.startedAt, entry.state.isStreaming {
-                    Text(start, style: .timer)
-                        .font(.caption.monospacedDigit())
-                        .foregroundStyle(.secondary)
-                }
             }
             Spacer()
-            VStack(spacing: 8) {
-                if entry.state.isStreaming {
+            if isActive {
+                HStack(spacing: 8) {
+                    Button(intent: ToggleReceiveMuteIntent()) {
+                        Image(systemName: entry.state.isReceiveMuted ? "speaker.wave.2.fill" : "speaker.slash.fill")
+                            .frame(width: 30, height: 30)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(!entry.state.isReceiving)
+
                     Button(intent: ToggleMuteIntent()) {
                         Image(systemName: entry.state.isMuted ? "mic.fill" : "mic.slash.fill")
-                            .frame(width: 28, height: 28)
+                            .frame(width: 30, height: 30)
                     }
                     .buttonStyle(.borderedProminent)
+                    .disabled(!entry.state.isStreaming)
+
                     Button(intent: EndLiveActivityIntent()) {
                         Image(systemName: "stop.fill")
-                            .frame(width: 28, height: 28)
-                    }
-                    .buttonStyle(.bordered)
-                } else {
-                    Link(destination: URL(string: "mismeeter://home")!) {
-                        Image(systemName: "arrow.up.forward.app.fill")
-                            .frame(width: 28, height: 28)
+                            .frame(width: 30, height: 30)
                     }
                     .buttonStyle(.borderedProminent)
+                    .tint(.red)
                 }
+            } else {
+                Link(destination: URL(string: "mismeeter://home")!) {
+                    Image(systemName: "arrow.up.forward.app.fill")
+                        .frame(width: 32, height: 32)
+                }
+                .buttonStyle(.borderedProminent)
             }
         }
     }
@@ -156,22 +173,31 @@ private struct MisMeeterWidgetView: View {
     private var accessoryCircular: some View {
         ZStack {
             AccessoryWidgetBackground()
-            Image(systemName: entry.state.isMuted ? "mic.slash.fill" : (entry.state.isStreaming ? "waveform" : "waveform.badge.plus"))
-                .font(.title3)
+            HStack(spacing: 2) {
+                if entry.state.isReceiving { Image(systemName: entry.state.isReceiveMuted ? "speaker.slash.fill" : "speaker.wave.1.fill") }
+                if entry.state.isStreaming { Image(systemName: entry.state.isMuted ? "mic.slash.fill" : "mic.fill") }
+                if !isActive { Image(systemName: "waveform.badge.plus") }
+            }
+            .font(.caption.weight(.bold))
         }
         .widgetAccentable()
     }
 
     private var accessoryRectangular: some View {
         VStack(alignment: .leading, spacing: 2) {
-            Label(entry.state.isStreaming ? "MisMeeter Live" : "MisMeeter Ready",
-                  systemImage: entry.state.isMuted ? "mic.slash.fill" : "waveform")
+            Label(isActive ? "MisMeeter Live" : "MisMeeter Ready", systemImage: isActive ? "waveform" : "waveform.badge.plus")
                 .font(.headline)
-            Text(entry.state.isStreaming ? entry.state.presetName : "Tap to open")
+            Text(isActive ? entry.state.status : "Tap to open")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
         }
         .widgetURL(URL(string: "mismeeter://home"))
+    }
+
+    private func statusIcon(systemImage: String, active: Bool, muted: Bool) -> some View {
+        Image(systemName: systemImage)
+            .foregroundStyle(active ? (muted ? Color.red : Color.green) : Color.secondary)
+            .widgetAccentable()
     }
 }

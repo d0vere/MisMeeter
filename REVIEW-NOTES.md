@@ -1,3 +1,17 @@
+# MisMeeter 3.2.0 — iOS 26.6 UI / Duplex Live Activity
+
+- Deployment target moved to iOS 26.6; custom cards/navigation use SwiftUI Liquid Glass APIs instead of material simulation.
+- Dynamic Island compact mode is symmetric: RX speaker at compact-leading, TX microphone at compact-trailing. Red indicates that channel is muted, green indicates active audio.
+- Expanded Live Activity title is intentionally only “Live” and exposes three large controls: RX mute, microphone mute, Stop All.
+- RX mute keeps the network receiver, jitter buffer, clock recovery and AVAudioEngine running; only playback output is attenuated to zero.
+- Live Activity lifecycle is duplex-aware: either TX or RX can create/keep it alive; it ends only when both stop or Stop All is invoked.
+- Widget controls mirror the same three actions.
+- Main navigation is swipeable using a page-style TabView plus a narrower native Liquid Glass floating selector. The Home settings shortcut was removed.
+
+> iOS applications must not terminate themselves programmatically. Stop All stops both audio paths and ends the Live Activity; it intentionally does not call `exit(0)`.
+
+---
+
 # Senior iOS review notes — MisMeeter 3.1.0
 
 ## Root cause addressed

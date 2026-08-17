@@ -1,4 +1,4 @@
-# MisMeeter 3.1.0 — Audio-clocked VBAN for iOS
+# MisMeeter 3.2.0 — Audio-clocked VBAN for iOS
 
 MisMeeter streams the iPhone microphone to a VBAN/VoiceMeeter destination and can independently receive a VBAN stream back to the iPhone.
 
@@ -31,18 +31,17 @@ The app UI was rebuilt around four system-native areas:
 - **Home** — transmission state, level meter, mute, start/stop and live-surface status
 - **Receive** — a dedicated RX Home with listening state, receive buffer and quality metrics
 - **Presets** — three TX and three RX presets with dedicated editors
-- **Settings** — capture/background controls plus the integrated Core Audio, VBAN and RX diagnostics monitor
-- **Settings** — capture engine, gain, background architecture and system-surface status
+- **Settings** — capture/background controls, gain and integrated Core Audio/VBAN/RX diagnostics monitor
 
-The project is compiled with the iOS 26 SDK / Xcode 26.6 so standard navigation, tabs, sheets and controls adopt Apple’s current Liquid Glass design language while keeping iOS 17 as the deployment target.
+The project is compiled with the iOS 26 SDK / Xcode 26.6 so standard navigation, tabs, sheets and controls adopt Apple’s current Liquid Glass design language while keeping iOS 26.6 as the deployment target.
 
-### Live Activity + compact Dynamic Island microphone indicator + Widget
-These are first-class surfaces in 3.0:
-- Lock Screen Live Activity
-- compact Dynamic Island microphone indicator compact/minimal/expanded presentations
-- Home Screen small and medium widget
+### Duplex Live Activity + Dynamic Island + Widget
+These are first-class iOS 26.6 surfaces in 3.2:
+- Lock Screen Live Activity with large RX mute, microphone mute and Stop All controls
+- compact Dynamic Island with RX speaker on the left and TX microphone on the right
+- RX-only and TX-only Live Activity lifecycle support
+- Home Screen small and medium widget with the same three controls
 - Lock Screen accessory circular and rectangular widget
-- Mute and Stop App Intent actions while TX is active
 - shared session state through App Group `group.dev.mismeeter.app`
 - Darwin notification control bridge to the running audio process
 
@@ -59,7 +58,7 @@ A new waveform/glass app icon is included in `MisMeeter/Assets.xcassets/AppIcon.
 - regenerates the Xcode project
 - validates generated plists and entitlements
 - builds the app and Widget Extension for generic iOS device with signing disabled
-- packages `MisMeeter-3.1.0-unsigned.ipa`
+- packages `MisMeeter-3.2.0-unsigned.ipa`
 - uploads the IPA and failure logs
 
 ## Local generation

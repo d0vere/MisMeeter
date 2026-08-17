@@ -13,6 +13,7 @@ final class MisMeeterRuntime {
     private var _isMuted = false
     private var _isStreaming = false
     private var _isReceiving = false
+    private var _isReceiveMuted = false
     private var _startedAt: Date?
     private var _preset = VBANPreset(name: "Preset 1", host: "", port: 6980, streamName: "MisMeeter")
 
@@ -67,10 +68,12 @@ final class MisMeeterRuntime {
         controlObserver.start { [weak self] action in
             guard let self else { return }
             switch action {
-            case .toggleMute:
+            case .toggleMicrophoneMute:
                 _ = self.toggleMuted()
-            case .stopStreaming:
-                Task { await self.stop() }
+            case .toggleReceiveMute:
+                _ = self.toggleReceiveMuted()
+            case .stopAll:
+                Task { await self.stopAll() }
             }
         }
         publishSharedState(status: "Ready")
@@ -79,6 +82,7 @@ final class MisMeeterRuntime {
     var isMuted: Bool { stateQueue.sync { _isMuted } }
     var isStreaming: Bool { stateQueue.sync { _isStreaming } }
     var isReceiving: Bool { stateQueue.sync { _isReceiving } }
+    var isReceiveMuted: Bool { stateQueue.sync { _isReceiveMuted } }
     var startedAt: Date? { stateQueue.sync { _startedAt } }
     var activePreset: VBANPreset { stateQueue.sync { _preset } }
 
@@ -112,17 +116,17 @@ final class MisMeeterRuntime {
 
         stateQueue.sync {
             _isStreaming = true
-            _startedAt = Date()
+            if _startedAt == nil { _startedAt = Date() }
         }
         if isReceiving { AudioSessionCoordinator.shared.forceSpeaker() }
-        publishSharedState(status: "Live")
-        await updateOrStartLiveActivity()
+        publishSharedState(status: isReceiving ? "Duplex live" : "Live")
+        await ensureLiveActivity()
     }
 
     func stop() async {
         guard isStreaming else {
-            await endLiveActivity()
-            publishSharedState(status: isReceiving ? "Listening" : "Ready")
+            await updateActivityLifecycle()
+            publishSharedState(status: isReceiving ? receiveStatusText : "Ready")
             return
         }
         let keepAudioSession = isReceiving
@@ -131,25 +135,57 @@ final class MisMeeterRuntime {
         stateQueue.sync {
             _isStreaming = false
             _isMuted = false
-            _startedAt = nil
+            if !_isReceiving { _startedAt = nil }
         }
-        publishSharedState(status: keepAudioSession ? "Listening" : "Ready")
-        await endLiveActivity()
+        publishSharedState(status: keepAudioSession ? receiveStatusText : "Ready")
+        await updateActivityLifecycle()
     }
 
     func startReceiving(preset: VBANReceivePreset) throws {
         try receiver.start(preset: preset, transmitterAlreadyActive: isStreaming)
-        stateQueue.sync { _isReceiving = true }
+        stateQueue.sync {
+            _isReceiving = true
+            _isReceiveMuted = false
+            if _startedAt == nil { _startedAt = Date() }
+        }
         publishSharedState(status: isStreaming ? "Duplex live" : "Listening")
-        Task { await syncLiveActivity() }
+        Task { await ensureLiveActivity() }
     }
 
     func stopReceiving() {
         let keepAudioSession = isStreaming
         receiver.stop(deactivateSession: !keepAudioSession)
-        stateQueue.sync { _isReceiving = false }
-        publishSharedState(status: keepAudioSession ? "Live" : "Ready")
-        Task { await syncLiveActivity() }
+        stateQueue.sync {
+            _isReceiving = false
+            _isReceiveMuted = false
+            if !_isStreaming { _startedAt = nil }
+        }
+        publishSharedState(status: keepAudioSession ? (isMuted ? "Microphone muted" : "Live") : "Ready")
+        Task { await updateActivityLifecycle() }
+    }
+
+    func stopAll() async {
+        let hadTX = isStreaming
+        let hadRX = isReceiving
+        if hadTX {
+            microphone.stop(deactivateSession: false)
+            transmitter.stop()
+        }
+        if hadRX {
+            receiver.stop(deactivateSession: false)
+        }
+        AudioSessionCoordinator.shared.deactivateIfPossible()
+        stateQueue.sync {
+            _isStreaming = false
+            _isMuted = false
+            _isReceiving = false
+            _isReceiveMuted = false
+            _startedAt = nil
+        }
+        SharedAppState.writeSnapshot(.idle)
+        onStatusChange?("Ready")
+        onReceiverStatus?("Ready")
+        await endLiveActivity()
     }
 
     @discardableResult
@@ -160,7 +196,7 @@ final class MisMeeterRuntime {
             return _isMuted
         }
         transmitter.setMuted(value)
-        publishSharedState(status: value ? "Muted" : "Live")
+        publishSharedState(status: value ? "Microphone muted" : (isReceiving ? "Duplex live" : "Live"))
         Task { await syncLiveActivity() }
         return value
     }
@@ -169,7 +205,25 @@ final class MisMeeterRuntime {
         guard isStreaming else { return }
         stateQueue.sync { _isMuted = value }
         transmitter.setMuted(value)
-        publishSharedState(status: value ? "Muted" : "Live")
+        publishSharedState(status: value ? "Microphone muted" : (isReceiving ? "Duplex live" : "Live"))
+        Task { await syncLiveActivity() }
+    }
+
+    @discardableResult
+    func toggleReceiveMuted() -> Bool {
+        guard isReceiving else { return false }
+        let value = receiver.toggleOutputMuted()
+        stateQueue.sync { _isReceiveMuted = value }
+        publishSharedState(status: value ? "Receive muted" : (isStreaming ? "Duplex live" : "Listening"))
+        Task { await syncLiveActivity() }
+        return value
+    }
+
+    func setReceiveMuted(_ value: Bool) {
+        guard isReceiving else { return }
+        receiver.setOutputMuted(value)
+        stateQueue.sync { _isReceiveMuted = value }
+        publishSharedState(status: value ? "Receive muted" : (isStreaming ? "Duplex live" : "Listening"))
         Task { await syncLiveActivity() }
     }
 
@@ -190,35 +244,37 @@ final class MisMeeterRuntime {
 
     func reconcileExternalControlState() async {
         let snapshot = SharedAppState.readSnapshot()
-        if isStreaming && !snapshot.isStreaming {
-            await stop()
-            return
+        if (isStreaming && !snapshot.isStreaming) || (isReceiving && !snapshot.isReceiving) {
+            if !snapshot.isStreaming && !snapshot.isReceiving {
+                await stopAll()
+                return
+            }
+            if isStreaming && !snapshot.isStreaming { await stop() }
+            if isReceiving && !snapshot.isReceiving { stopReceiving() }
         }
-        if isStreaming && snapshot.isMuted != isMuted {
-            setMuted(snapshot.isMuted)
-        }
+        if isStreaming && snapshot.isMuted != isMuted { setMuted(snapshot.isMuted) }
+        if isReceiving && snapshot.isReceiveMuted != isReceiveMuted { setReceiveMuted(snapshot.isReceiveMuted) }
     }
 
     func cleanupOrphanedLiveActivitiesIfIdle() async {
-        guard !isStreaming else { return }
-        for activity in Activity<MicActivityAttributes>.activities {
-            await activity.end(
-                ActivityContent(state: activityState(status: "Stopped"), staleDate: nil),
-                dismissalPolicy: .immediate
-            )
-        }
+        guard !isStreaming && !isReceiving else { return }
+        await endLiveActivity()
     }
 
     func syncLiveActivity() async {
-        let state = activityState(status: isMuted ? "Muted" : (isStreaming ? "Live" : "Stopped"))
+        guard isStreaming || isReceiving else {
+            await endLiveActivity()
+            return
+        }
+        let state = activityState(status: currentStatusText)
         for activity in Activity<MicActivityAttributes>.activities {
             await activity.update(ActivityContent(state: state, staleDate: nil))
         }
     }
 
-    private func updateOrStartLiveActivity() async {
+    private func ensureLiveActivity() async {
         let preset = activePreset
-        let state = activityState(status: "Live")
+        let state = activityState(status: currentStatusText)
         if let activity = Activity<MicActivityAttributes>.activities.first {
             await activity.update(ActivityContent(state: state, staleDate: nil))
             return
@@ -235,8 +291,16 @@ final class MisMeeterRuntime {
         }
     }
 
+    private func updateActivityLifecycle() async {
+        if isStreaming || isReceiving {
+            await ensureLiveActivity()
+        } else {
+            await endLiveActivity()
+        }
+    }
+
     private func endLiveActivity() async {
-        let state = activityState(status: "Stopped")
+        let state = MicActivityAttributes.ContentState(snapshot: .idle)
         for activity in Activity<MicActivityAttributes>.activities {
             await activity.end(
                 ActivityContent(state: state, staleDate: nil),
@@ -245,32 +309,39 @@ final class MisMeeterRuntime {
         }
     }
 
+    private var receiveStatusText: String {
+        isReceiveMuted ? "Receive muted" : "Listening"
+    }
+
+    private var currentStatusText: String {
+        if isStreaming && isReceiving { return (isMuted || isReceiveMuted) ? "Live · muted channel" : "Duplex live" }
+        if isStreaming { return isMuted ? "Microphone muted" : "Live" }
+        if isReceiving { return isReceiveMuted ? "Receive muted" : "Listening" }
+        return "Ready"
+    }
+
     private func activityState(status: String) -> MicActivityAttributes.ContentState {
+        var snapshot = sharedSnapshot(status: status)
+        snapshot.status = status
+        return MicActivityAttributes.ContentState(snapshot: snapshot)
+    }
+
+    private func sharedSnapshot(status: String) -> SharedTransportSnapshot {
         let preset = activePreset
-        return MicActivityAttributes.ContentState(
-            isMuted: isMuted,
+        return SharedTransportSnapshot(
             isStreaming: isStreaming,
+            isMuted: isMuted,
             isReceiving: isReceiving,
-            destinationLabel: preset.destinationLabel,
-            presetLabel: preset.name,
+            isReceiveMuted: isReceiveMuted,
+            presetName: preset.name,
+            destination: preset.destinationLabel,
+            streamName: preset.sanitizedStreamName,
             startedAt: startedAt,
-            statusLabel: status
+            status: status
         )
     }
 
     private func publishSharedState(status: String) {
-        let preset = activePreset
-        SharedAppState.writeSnapshot(
-            SharedTransportSnapshot(
-                isStreaming: isStreaming,
-                isMuted: isMuted,
-                isReceiving: isReceiving,
-                presetName: preset.name,
-                destination: preset.destinationLabel,
-                streamName: preset.sanitizedStreamName,
-                startedAt: startedAt,
-                status: status
-            )
-        )
+        SharedAppState.writeSnapshot(sharedSnapshot(status: status))
     }
 }

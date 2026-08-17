@@ -8,6 +8,7 @@ struct SharedTransportSnapshot: Codable, Hashable {
     var isStreaming = false
     var isMuted = false
     var isReceiving = false
+    var isReceiveMuted = false
     var presetName = "MisMeeter"
     var destination = "Not connected"
     var streamName = "MisMeeter"
@@ -18,16 +19,17 @@ struct SharedTransportSnapshot: Codable, Hashable {
 }
 
 enum SharedControlAction: Int, Codable {
-    case toggleMute = 1
-    case stopStreaming = 2
+    case toggleMicrophoneMute = 1
+    case stopAll = 2
+    case toggleReceiveMute = 3
 }
 
 enum SharedAppState {
     static let appGroup = "group.dev.mismeeter.app"
     static let controlNotification = "dev.mismeeter.app.control"
-    private static let snapshotKey = "transport.snapshot.v3"
-    private static let actionKey = "control.action.v3"
-    private static let actionIDKey = "control.action.id.v3"
+    private static let snapshotKey = "transport.snapshot.v4"
+    private static let actionKey = "control.action.v4"
+    private static let actionIDKey = "control.action.id.v4"
 
     private static var defaults: UserDefaults {
         UserDefaults(suiteName: appGroup) ?? .standard

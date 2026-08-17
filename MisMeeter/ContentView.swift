@@ -164,17 +164,18 @@ struct ContentView: View {
             VStack(spacing: 18) {
                 heroCard
                 audioLevelCard
+                sendControlsCard
                 HStack(spacing: 12) {
                     compactStatusCard(title: "TX", value: txStatus, icon: "arrow.up.circle.fill", active: isStreaming)
                     compactStatusCard(title: "RX", value: rxStatus, icon: "arrow.down.circle.fill", active: isReceiving)
                 }
-                liveSurfaceCard
+                sendQualityCard
             }
             .padding(16)
             .padding(.bottom, 92)
         }
         .background(appBackground)
-        .navigationTitle("MisMeeter")
+        .navigationTitle("Send")
     }
 
     private var heroCard: some View {
@@ -280,6 +281,57 @@ struct ContentView: View {
                 }
             }
             .frame(height: 9)
+        }
+        .padding(18)
+        .glassCard()
+    }
+
+    private var sendControlsCard: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack {
+                Label("Send controls", systemImage: "slider.horizontal.3")
+                    .font(.headline)
+                Spacer()
+                Text(isStreaming ? "Locked while live" : "Ready")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            VStack(alignment: .leading, spacing: 9) {
+                HStack {
+                    Label("Input gain", systemImage: "dial.medium.fill")
+                        .font(.subheadline.weight(.semibold))
+                    Spacer()
+                    Text("+\(Int(gainDB)) dB")
+                        .font(.subheadline.monospacedDigit().weight(.semibold))
+                        .foregroundStyle(.secondary)
+                }
+                Slider(value: $gainDB, in: 0...24, step: 1)
+                    .onChange(of: gainDB) { _, value in
+                        MisMeeterRuntime.shared.gainDB = Float(value)
+                    }
+            }
+
+            Divider().opacity(0.45)
+
+            HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Label("Capture engine", systemImage: "waveform.badge.mic")
+                        .font(.subheadline.weight(.semibold))
+                    Text("Choose the Core Audio input path used by Send.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 8)
+                Picker("Capture engine", selection: $captureModeRaw) {
+                    ForEach(CaptureMode.allCases) { mode in
+                        Text(mode.title).tag(mode.rawValue)
+                    }
+                }
+                .labelsHidden()
+                .pickerStyle(.menu)
+                .disabled(isStreaming)
+            }
         }
         .padding(18)
         .glassCard()
@@ -425,29 +477,18 @@ struct ContentView: View {
         .glassCard()
     }
 
-    private var liveSurfaceCard: some View {
+    private var sendQualityCard: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Label("System surfaces", systemImage: "platter.filled.top.and.arrow.up.iphone")
+            Label("Send quality", systemImage: "antenna.radiowaves.left.and.right")
                 .font(.headline)
-            Text("Dynamic Island stays compact and symmetric: receive audio appears on the left, microphone TX on the right. Long-press reveals large RX mute, microphone mute and Stop All controls.")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-            HStack(spacing: 8) {
-                surfaceBadge("Live Activity", "bolt.horizontal.circle")
-                surfaceBadge("Widget", "square.grid.2x2")
-                surfaceBadge("Island", "capsule")
-            }
+            metric("Packets sent", packetsSent.formatted())
+            metric("Send errors", sendErrors.formatted())
+            metric("Max TX gap", String(format: "%.2f ms", maxSendGapMS))
+            metric("Capture rate", String(format: "%.1f Hz", measuredCaptureHz))
+            metric("TX rate", String(format: "%.1f Hz", effectiveTXHz))
         }
         .padding(18)
         .glassCard()
-    }
-
-    private func surfaceBadge(_ text: String, _ icon: String) -> some View {
-        Label(text, systemImage: icon)
-            .font(.caption.weight(.semibold))
-            .padding(.horizontal, 9)
-            .padding(.vertical, 7)
-            .background(.ultraThinMaterial, in: Capsule())
     }
 
     private var presetsView: some View {
@@ -476,7 +517,7 @@ struct ContentView: View {
             } header: {
                 Label("Transmit preset", systemImage: "mic.and.signal.meter")
             } footer: {
-                Text("Destination used by the microphone Home screen.")
+                Text("Destination used by the Send screen.")
             }
 
             Section {
@@ -515,19 +556,6 @@ struct ContentView: View {
 
     private var settingsView: some View {
         Form {
-            Section("Microphone") {
-                Picker("Capture engine", selection: $captureModeRaw) {
-                    ForEach(CaptureMode.allCases) { mode in Text(mode.title).tag(mode.rawValue) }
-                }
-                .disabled(isStreaming)
-
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack { Text("Input gain"); Spacer(); Text("+\(Int(gainDB)) dB").foregroundStyle(.secondary) }
-                    Slider(value: $gainDB, in: 0...24, step: 1)
-                        .onChange(of: gainDB) { _, value in MisMeeterRuntime.shared.gainDB = Float(value) }
-                }
-            }
-
             Section("Background reliability") {
                 Label("Audio-clocked nonblocking UDP", systemImage: "checkmark.seal.fill")
                 Label("Audio background mode", systemImage: "lock.shield.fill")
@@ -570,7 +598,7 @@ struct ContentView: View {
             }
 
             Section("About") {
-                LabeledContent("Version", value: "3.2.2")
+                LabeledContent("Version", value: "3.2.3")
                 LabeledContent("Audio", value: "48 kHz / PCM16 / VBAN")
                 LabeledContent("Minimum iOS", value: "18.5")
                 LabeledContent("Toolchain", value: "Xcode 16.4 · iOS SDK 18.5")
@@ -749,7 +777,7 @@ private enum AppSection: String, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
-        case .transmit: return "Home"
+        case .transmit: return "Send"
         case .receive: return "Receive"
         case .presets: return "Presets"
         case .settings: return "Settings"

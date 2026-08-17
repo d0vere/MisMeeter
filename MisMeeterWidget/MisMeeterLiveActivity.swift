@@ -12,7 +12,7 @@ struct MisMeeterLiveActivity: Widget {
         } dynamicIsland: { context in
             DynamicIsland {
                 DynamicIslandExpandedRegion(.leading) {
-                    HStack(spacing: 8) {
+                    HStack(spacing: 7) {
                         if context.state.isReceiving {
                             receiveIndicator(context.state)
                         }
@@ -20,11 +20,13 @@ struct MisMeeterLiveActivity: Widget {
                             .font(.headline)
                             .lineLimit(1)
                     }
+                    .padding(.leading, 16)
                 }
 
                 DynamicIslandExpandedRegion(.trailing) {
                     if context.state.isStreaming {
                         microphoneIndicator(context.state)
+                            .padding(.trailing, 16)
                     }
                 }
 

@@ -73,16 +73,16 @@ private struct MisMeeterWidgetView: View {
                 statusIcon(systemImage: entry.state.isReceiveMuted ? "speaker.slash.fill" : "speaker.wave.2.fill", active: entry.state.isReceiving, muted: entry.state.isReceiveMuted)
                 statusIcon(systemImage: entry.state.isMuted ? "mic.slash.fill" : "mic.fill", active: entry.state.isStreaming, muted: entry.state.isMuted)
                 Spacer()
-                Text(isActive ? "LIVE" : "READY")
-                    .font(.caption2.weight(.bold))
-                    .foregroundStyle(.secondary)
+                Circle()
+                    .fill(isActive ? Color.green : Color.secondary.opacity(0.55))
+                    .frame(width: 7, height: 7)
             }
 
             Spacer(minLength: 0)
-            Text(entry.state.status)
+            Text(entry.state.presetName)
                 .font(.headline)
                 .lineLimit(1)
-            Text(entry.state.presetName)
+            Text(isActive ? entry.state.status : "Ready")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
@@ -126,8 +126,9 @@ private struct MisMeeterWidgetView: View {
                 HStack(spacing: 8) {
                     statusIcon(systemImage: entry.state.isReceiveMuted ? "speaker.slash.fill" : "speaker.wave.2.fill", active: entry.state.isReceiving, muted: entry.state.isReceiveMuted)
                     statusIcon(systemImage: entry.state.isMuted ? "mic.slash.fill" : "mic.fill", active: entry.state.isStreaming, muted: entry.state.isMuted)
-                    Text("MisMeeter")
+                    Text(entry.state.presetName)
                         .font(.headline)
+                        .lineLimit(1)
                 }
                 Text(isActive ? entry.state.status : "Ready")
                     .font(.title3.weight(.semibold))
@@ -185,9 +186,10 @@ private struct MisMeeterWidgetView: View {
 
     private var accessoryRectangular: some View {
         VStack(alignment: .leading, spacing: 2) {
-            Label(isActive ? "MisMeeter Live" : "MisMeeter Ready", systemImage: isActive ? "waveform" : "waveform.badge.plus")
+            Label(entry.state.presetName, systemImage: isActive ? "waveform" : "waveform.badge.plus")
                 .font(.headline)
-            Text(isActive ? entry.state.status : "Tap to open")
+                .lineLimit(1)
+            Text(isActive ? entry.state.status : "Ready · Tap to open")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)

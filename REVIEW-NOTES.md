@@ -1,4 +1,4 @@
-# MisMeeter 3.2.2 — iOS 18.5 UI / Duplex Live Activity
+# MisMeeter 3.2.3 — iOS 18.5 UI / Duplex Live Activity
 
 - Deployment target moved to iOS 18.5; custom cards/navigation use an iOS 18.5-compatible ultra-thin Material treatment.
 - Dynamic Island compact mode is symmetric: RX speaker at compact-leading, TX microphone at compact-trailing. Red indicates that channel is muted, green indicates active audio.
@@ -58,11 +58,20 @@ A full iOS SDK semantic build cannot run in this Linux environment. GitHub Actio
 - The former Monitor screen is integrated into Settings as Transport, Core Audio and Receiver diagnostic sections.
 - Small and medium widgets expose both Mute and Stop while TX is active.
 
-## 3.2.2 CI build fix
+## 3.2.3 CI build fix
 
 - GitHub Actions targets `macos-15` and explicitly selects `/Applications/Xcode_16.4.app/Contents/Developer`.
 - The workflow verifies the selected iPhoneOS SDK is exactly 18.5 before project generation.
 - Deployment target is iOS 18.5 for both the app and Widget extension.
 - Xcode 16.4 compatibility uses a lightweight ultra-thin Material treatment instead of the unavailable iOS 26 `glassEffect` API.
-- App and widget versions are 3.2.2 (build 34).
-- CI artifact is now `MisMeeter-3.2.2-unsigned.ipa`.
+- App and widget versions are 3.2.3 (build 35).
+- CI artifact is now `MisMeeter-3.2.3-unsigned.ipa`.
+
+## 3.2.3 Send / Widget refinement
+- Renamed the TX root tab and navigation title from Home/MisMeeter to **Send**.
+- Moved **Input gain** and **Capture engine** from Settings into a dedicated Send controls card. Capture engine remains locked while TX is live; gain remains live-adjustable.
+- Replaced the Send screen's System Surfaces card with **Send quality** diagnostics: packets sent, send errors, max TX gap, capture rate and TX rate.
+- Pulled the expanded Dynamic Island leading/trailing content inward to avoid clipping against the island mask.
+- Widget hierarchy now leads with the active preset name and current transport state instead of generic Live copy.
+- Runtime now remembers the active RX preset so RX-only widgets show the correct Receive preset rather than a stale TX preset.
+- Version bumped to 3.2.3 (build 35); Xcode 16.4 / iOS 18.5 CI remains unchanged apart from artifact versioning.

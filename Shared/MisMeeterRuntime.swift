@@ -16,6 +16,7 @@ final class MisMeeterRuntime {
     private var _isReceiveMuted = false
     private var _startedAt: Date?
     private var _preset = VBANPreset(name: "Preset 1", host: "", port: 6980, streamName: "MisMeeter")
+    private var _receivePreset = VBANReceivePreset(name: "Receive", port: 6980, streamName: "MisMeeterRX", bufferMS: 100)
 
     var onStatusChange: ((String) -> Void)?
     var onMeter: ((Float) -> Void)?
@@ -85,6 +86,7 @@ final class MisMeeterRuntime {
     var isReceiveMuted: Bool { stateQueue.sync { _isReceiveMuted } }
     var startedAt: Date? { stateQueue.sync { _startedAt } }
     var activePreset: VBANPreset { stateQueue.sync { _preset } }
+    var activeReceivePreset: VBANReceivePreset { stateQueue.sync { _receivePreset } }
 
     var gainDB: Float {
         get { microphone.gainDB }
@@ -144,6 +146,7 @@ final class MisMeeterRuntime {
     func startReceiving(preset: VBANReceivePreset) throws {
         try receiver.start(preset: preset, transmitterAlreadyActive: isStreaming)
         stateQueue.sync {
+            _receivePreset = preset
             _isReceiving = true
             _isReceiveMuted = false
             if _startedAt == nil { _startedAt = Date() }
@@ -327,15 +330,22 @@ final class MisMeeterRuntime {
     }
 
     private func sharedSnapshot(status: String) -> SharedTransportSnapshot {
-        let preset = activePreset
+        let txPreset = activePreset
+        let rxPreset = activeReceivePreset
+        let primaryPresetName = isStreaming ? txPreset.name : (isReceiving ? rxPreset.name : txPreset.name)
+        let primaryDestination = isStreaming
+            ? txPreset.destinationLabel
+            : (isReceiving ? "RX · UDP \(rxPreset.port)" : "Not connected")
+        let primaryStreamName = isStreaming ? txPreset.sanitizedStreamName : rxPreset.sanitizedStreamName
+
         return SharedTransportSnapshot(
             isStreaming: isStreaming,
             isMuted: isMuted,
             isReceiving: isReceiving,
             isReceiveMuted: isReceiveMuted,
-            presetName: preset.name,
-            destination: preset.destinationLabel,
-            streamName: preset.sanitizedStreamName,
+            presetName: primaryPresetName,
+            destination: primaryDestination,
+            streamName: primaryStreamName,
             startedAt: startedAt,
             status: status
         )

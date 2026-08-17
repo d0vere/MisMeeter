@@ -10,12 +10,61 @@ struct SharedTransportSnapshot: Codable, Hashable {
     var isReceiving = false
     var isReceiveMuted = false
     var presetName = "MisMeeter"
+    var sendPresetName = "MisMeeter"
+    var receivePresetName = "MisMeeter"
     var destination = "Not connected"
     var streamName = "MisMeeter"
     var startedAt: Date?
     var status = "Ready"
 
     static let idle = SharedTransportSnapshot()
+
+    private enum CodingKeys: String, CodingKey {
+        case isStreaming, isMuted, isReceiving, isReceiveMuted
+        case presetName, sendPresetName, receivePresetName
+        case destination, streamName, startedAt, status
+    }
+
+    init(
+        isStreaming: Bool = false,
+        isMuted: Bool = false,
+        isReceiving: Bool = false,
+        isReceiveMuted: Bool = false,
+        presetName: String = "MisMeeter",
+        sendPresetName: String? = nil,
+        receivePresetName: String? = nil,
+        destination: String = "Not connected",
+        streamName: String = "MisMeeter",
+        startedAt: Date? = nil,
+        status: String = "Ready"
+    ) {
+        self.isStreaming = isStreaming
+        self.isMuted = isMuted
+        self.isReceiving = isReceiving
+        self.isReceiveMuted = isReceiveMuted
+        self.presetName = presetName
+        self.sendPresetName = sendPresetName ?? presetName
+        self.receivePresetName = receivePresetName ?? presetName
+        self.destination = destination
+        self.streamName = streamName
+        self.startedAt = startedAt
+        self.status = status
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        isStreaming = try container.decodeIfPresent(Bool.self, forKey: .isStreaming) ?? false
+        isMuted = try container.decodeIfPresent(Bool.self, forKey: .isMuted) ?? false
+        isReceiving = try container.decodeIfPresent(Bool.self, forKey: .isReceiving) ?? false
+        isReceiveMuted = try container.decodeIfPresent(Bool.self, forKey: .isReceiveMuted) ?? false
+        presetName = try container.decodeIfPresent(String.self, forKey: .presetName) ?? "MisMeeter"
+        sendPresetName = try container.decodeIfPresent(String.self, forKey: .sendPresetName) ?? presetName
+        receivePresetName = try container.decodeIfPresent(String.self, forKey: .receivePresetName) ?? presetName
+        destination = try container.decodeIfPresent(String.self, forKey: .destination) ?? "Not connected"
+        streamName = try container.decodeIfPresent(String.self, forKey: .streamName) ?? "MisMeeter"
+        startedAt = try container.decodeIfPresent(Date.self, forKey: .startedAt)
+        status = try container.decodeIfPresent(String.self, forKey: .status) ?? "Ready"
+    }
 }
 
 enum SharedControlAction: Int, Codable {

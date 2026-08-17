@@ -344,6 +344,8 @@ final class MisMeeterRuntime {
             isReceiving: isReceiving,
             isReceiveMuted: isReceiveMuted,
             presetName: primaryPresetName,
+            sendPresetName: txPreset.name,
+            receivePresetName: rxPreset.name,
             destination: primaryDestination,
             streamName: primaryStreamName,
             startedAt: startedAt,

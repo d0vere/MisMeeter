@@ -11,34 +11,43 @@ struct MisMeeterLiveActivity: Widget {
                 .activitySystemActionForegroundColor(.primary)
         } dynamicIsland: { context in
             DynamicIsland {
-                // Keep the RX/TX indicators in the same visual anchors used by the
-                // compact island. Expanded content grows around them instead of
-                // pushing the indicators toward the outer clipped edges.
+                // Expanded mode deliberately leaves the physical camera/sensor area clear.
+                // RX is kept on the left and TX on the right, with the preset labels growing
+                // outward from their indicators instead of putting content over the camera.
                 DynamicIslandExpandedRegion(.leading) {
-                    HStack(spacing: 0) {
-                        Spacer(minLength: 0)
+                    HStack(spacing: 6) {
+                        Text(context.state.receivePresetLabel)
+                            .font(.caption2.weight(.semibold))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.7)
+                        Spacer(minLength: 2)
                         if context.state.isReceiving {
                             receiveIndicator(context.state)
                                 .accessibilityLabel(context.state.isReceiveMuted ? "Receive audio muted" : "Receive audio active")
                         }
                     }
+                    .padding(.trailing, 12)
                 }
 
                 DynamicIslandExpandedRegion(.center) {
-                    Text("Live")
-                        .font(.headline)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.85)
+                    Color.clear
+                        .frame(width: 1, height: 1)
+                        .accessibilityHidden(true)
                 }
 
                 DynamicIslandExpandedRegion(.trailing) {
-                    HStack(spacing: 0) {
+                    HStack(spacing: 6) {
                         if context.state.isStreaming {
                             microphoneIndicator(context.state)
                                 .accessibilityLabel(context.state.isMuted ? "Microphone muted" : "Microphone active")
                         }
-                        Spacer(minLength: 0)
+                        Spacer(minLength: 2)
+                        Text(context.state.sendPresetLabel)
+                            .font(.caption2.weight(.semibold))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.7)
                     }
+                    .padding(.leading, 12)
                 }
 
                 DynamicIslandExpandedRegion(.bottom) {
@@ -47,7 +56,7 @@ struct MisMeeterLiveActivity: Widget {
                             title: context.state.isReceiveMuted ? "Audio on" : "Mute RX",
                             systemImage: context.state.isReceiveMuted ? "speaker.wave.2.fill" : "speaker.slash.fill",
                             enabled: context.state.isReceiving,
-                            tint: context.state.isReceiveMuted ? .green : .blue,
+                            tint: transportTint(active: context.state.isReceiving, muted: context.state.isReceiveMuted),
                             intent: ToggleReceiveMuteIntent()
                         )
 
@@ -55,7 +64,7 @@ struct MisMeeterLiveActivity: Widget {
                             title: context.state.isMuted ? "Mic on" : "Mute Mic",
                             systemImage: context.state.isMuted ? "mic.fill" : "mic.slash.fill",
                             enabled: context.state.isStreaming,
-                            tint: context.state.isMuted ? .green : .orange,
+                            tint: transportTint(active: context.state.isStreaming, muted: context.state.isMuted),
                             intent: ToggleMuteIntent()
                         )
 
@@ -109,6 +118,11 @@ struct MisMeeterLiveActivity: Widget {
             .foregroundStyle(state.isMuted ? .red : .green)
     }
 
+    private func transportTint(active: Bool, muted: Bool) -> Color {
+        guard active else { return .gray }
+        return muted ? .red : .green
+    }
+
     private func isAnyMuted(_ state: MicActivityAttributes.ContentState) -> Bool {
         (state.isStreaming && state.isMuted) || (state.isReceiving && state.isReceiveMuted)
     }
@@ -142,28 +156,29 @@ private struct LockActivityView: View {
     var body: some View {
         VStack(spacing: 12) {
             HStack(spacing: 10) {
-                stateBadge(
-                    systemImage: context.state.isReceiveMuted ? "speaker.slash.fill" : "speaker.wave.2.fill",
-                    active: context.state.isReceiving,
-                    muted: context.state.isReceiveMuted
-                )
-
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Live")
-                        .font(.headline)
-                    Text(context.state.statusLabel)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("RX · \(context.state.receivePresetLabel)")
+                        .font(.caption.weight(.semibold))
                         .lineLimit(1)
+                    stateBadge(
+                        systemImage: context.state.isReceiveMuted ? "speaker.slash.fill" : "speaker.wave.2.fill",
+                        active: context.state.isReceiving,
+                        muted: context.state.isReceiveMuted
+                    )
                 }
 
-                Spacer(minLength: 8)
+                Spacer(minLength: 10)
 
-                stateBadge(
-                    systemImage: context.state.isMuted ? "mic.slash.fill" : "mic.fill",
-                    active: context.state.isStreaming,
-                    muted: context.state.isMuted
-                )
+                VStack(alignment: .trailing, spacing: 3) {
+                    Text("TX · \(context.state.sendPresetLabel)")
+                        .font(.caption.weight(.semibold))
+                        .lineLimit(1)
+                    stateBadge(
+                        systemImage: context.state.isMuted ? "mic.slash.fill" : "mic.fill",
+                        active: context.state.isStreaming,
+                        muted: context.state.isMuted
+                    )
+                }
             }
 
             HStack(spacing: 10) {
@@ -176,7 +191,7 @@ private struct LockActivityView: View {
                     .frame(maxWidth: .infinity, minHeight: 48)
                 }
                 .buttonStyle(.borderedProminent)
-                .tint(context.state.isReceiveMuted ? .green : .blue)
+                .tint(transportTint(active: context.state.isReceiving, muted: context.state.isReceiveMuted))
                 .disabled(!context.state.isReceiving)
 
                 Button(intent: ToggleMuteIntent()) {
@@ -188,7 +203,7 @@ private struct LockActivityView: View {
                     .frame(maxWidth: .infinity, minHeight: 48)
                 }
                 .buttonStyle(.borderedProminent)
-                .tint(context.state.isMuted ? .green : .orange)
+                .tint(transportTint(active: context.state.isStreaming, muted: context.state.isMuted))
                 .disabled(!context.state.isStreaming)
 
                 Button(intent: EndLiveActivityIntent()) {
@@ -202,6 +217,11 @@ private struct LockActivityView: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 12)
+    }
+
+    private func transportTint(active: Bool, muted: Bool) -> Color {
+        guard active else { return .gray }
+        return muted ? .red : .green
     }
 
     private func stateBadge(systemImage: String, active: Bool, muted: Bool) -> some View {

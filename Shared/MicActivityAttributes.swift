@@ -9,6 +9,8 @@ struct MicActivityAttributes: ActivityAttributes {
         var isReceiveMuted: Bool
         var destinationLabel: String
         var presetLabel: String
+        var sendPresetLabel: String
+        var receivePresetLabel: String
         var startedAt: Date?
         var statusLabel: String
 
@@ -19,6 +21,8 @@ struct MicActivityAttributes: ActivityAttributes {
             isReceiveMuted = snapshot.isReceiveMuted
             destinationLabel = snapshot.destination
             presetLabel = snapshot.presetName
+            sendPresetLabel = snapshot.sendPresetName
+            receivePresetLabel = snapshot.receivePresetName
             startedAt = snapshot.startedAt
             statusLabel = snapshot.status
         }

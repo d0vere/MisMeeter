@@ -1,4 +1,4 @@
-# MisMeeter 3.2.1 — Audio-clocked VBAN for iOS
+# MisMeeter 3.2.2 — Audio-clocked VBAN for iOS
 
 MisMeeter streams the iPhone microphone to a VBAN/VoiceMeeter destination and can independently receive a VBAN stream back to the iPhone.
 
@@ -33,10 +33,10 @@ The app UI was rebuilt around four system-native areas:
 - **Presets** — three TX and three RX presets with dedicated editors
 - **Settings** — capture/background controls, gain and integrated Core Audio/VBAN/RX diagnostics monitor
 
-The project is compiled with Xcode 26.6 and the iOS 26.5 SDK so standard navigation, tabs, sheets and controls adopt Apple’s current Liquid Glass design language while keeping iOS 26.5 as the deployment target.
+The project is compiled with Xcode 16.4 and the iOS 18.5 SDK. The custom floating navigation and cards use a lightweight ultra-thin Material treatment with subtle borders and shadows, preserving the modern translucent direction without relying on iOS 26-only APIs.
 
 ### Duplex Live Activity + Dynamic Island + Widget
-These are first-class iOS 26 surfaces in 3.2.1:
+These remain first-class system surfaces in 3.2.2 on iOS 18.5:
 - Lock Screen Live Activity with large RX mute, microphone mute and Stop All controls
 - compact Dynamic Island with RX speaker on the left and TX microphone on the right
 - RX-only and TX-only Live Activity lifecycle support
@@ -52,13 +52,13 @@ A new waveform/glass app icon is included in `MisMeeter/Assets.xcassets/AppIcon.
 
 ## GitHub Actions
 `.github/workflows/build-ios.yml` now:
-- uses `macos-26`
-- checks that Xcode 26.6 or newer is selected
+- uses `macos-15`
+- explicitly selects Xcode 16.4 and verifies the iOS 18.5 SDK
 - installs XcodeGen
 - regenerates the Xcode project
 - validates generated plists and entitlements
 - builds the app and Widget Extension for generic iOS device with signing disabled
-- packages `MisMeeter-3.2.1-unsigned.ipa`
+- packages `MisMeeter-3.2.2-unsigned.ipa`
 - uploads the IPA and failure logs
 
 ## Local generation

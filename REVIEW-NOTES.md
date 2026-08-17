@@ -1,12 +1,12 @@
-# MisMeeter 3.2.1 — iOS 26.5 UI / Duplex Live Activity
+# MisMeeter 3.2.2 — iOS 18.5 UI / Duplex Live Activity
 
-- Deployment target moved to iOS 26.5; custom cards/navigation use SwiftUI Liquid Glass APIs instead of material simulation.
+- Deployment target moved to iOS 18.5; custom cards/navigation use an iOS 18.5-compatible ultra-thin Material treatment.
 - Dynamic Island compact mode is symmetric: RX speaker at compact-leading, TX microphone at compact-trailing. Red indicates that channel is muted, green indicates active audio.
 - Expanded Live Activity title is intentionally only “Live” and exposes three large controls: RX mute, microphone mute, Stop All.
 - RX mute keeps the network receiver, jitter buffer, clock recovery and AVAudioEngine running; only playback output is attenuated to zero.
 - Live Activity lifecycle is duplex-aware: either TX or RX can create/keep it alive; it ends only when both stop or Stop All is invoked.
 - Widget controls mirror the same three actions.
-- Main navigation is swipeable using a page-style TabView plus a narrower native Liquid Glass floating selector. The Home settings shortcut was removed.
+- Main navigation is swipeable using a page-style TabView plus a narrower translucent floating selector. The Home settings shortcut was removed.
 
 > iOS applications must not terminate themselves programmatically. Stop All stops both audio paths and ends the Live Activity; it intentionally does not call `exit(0)`.
 
@@ -37,7 +37,7 @@ The 3.0 transmitter removes that scheduler boundary. Each 48 kHz Core Audio call
 - App icon size/source manually inspected.
 - Old TX worker/workgroup references removed.
 
-A full iOS SDK semantic build cannot run in this Linux environment. GitHub Actions is configured to perform that build using `macos-26` and requires Xcode 26.6 exactly or newer compatible toolchain.
+A full iOS SDK semantic build cannot run in this Linux environment. GitHub Actions is configured to perform that build using `macos-15` and requires Xcode 16.4 exactly or newer compatible toolchain.
 
 ## Device test checklist
 1. Sign both targets with App Group `group.dev.mismeeter.app` enabled.
@@ -58,12 +58,11 @@ A full iOS SDK semantic build cannot run in this Linux environment. GitHub Actio
 - The former Monitor screen is integrated into Settings as Transport, Core Audio and Receiver diagnostic sections.
 - Small and medium widgets expose both Mute and Stop while TX is active.
 
-## 3.2.1 CI build fix
+## 3.2.2 CI build fix
 
-- GitHub Actions now selects `/Applications/Xcode_26.6.app/Contents/Developer` explicitly through both `DEVELOPER_DIR` and `xcode-select`.
-- The workflow verifies `xcodebuild -version` before project generation and aborts immediately when Xcode is older than 26.6.
-- The workflow separately verifies `xcrun --sdk iphoneos --show-sdk-version` and requires iOS SDK 26.5 or newer.
-- Deployment target is now 26.5. This is intentional: Xcode 26.6 ships the iOS 26.5 SDK, not an iOS 26.6 SDK.
-- Native SwiftUI Liquid Glass (`glassEffect`) remains enabled; no iOS 18 compatibility fallback was introduced.
-- App and widget versions are 3.2.1 (build 33).
-- CI artifact is now `MisMeeter-3.2.1-unsigned.ipa`.
+- GitHub Actions targets `macos-15` and explicitly selects `/Applications/Xcode_16.4.app/Contents/Developer`.
+- The workflow verifies the selected iPhoneOS SDK is exactly 18.5 before project generation.
+- Deployment target is iOS 18.5 for both the app and Widget extension.
+- Xcode 16.4 compatibility uses a lightweight ultra-thin Material treatment instead of the unavailable iOS 26 `glassEffect` API.
+- App and widget versions are 3.2.2 (build 34).
+- CI artifact is now `MisMeeter-3.2.2-unsigned.ipa`.

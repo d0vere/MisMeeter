@@ -148,7 +148,15 @@ struct ContentView: View {
             }
         }
         .padding(5)
-        .glassEffect()
+        .background {
+            Capsule(style: .continuous)
+                .fill(.ultraThinMaterial)
+                .overlay {
+                    Capsule(style: .continuous)
+                        .strokeBorder(Color.white.opacity(0.16), lineWidth: 0.7)
+                }
+                .shadow(color: Color.black.opacity(0.10), radius: 18, y: 8)
+        }
     }
 
     private var txHomeView: some View {
@@ -562,10 +570,10 @@ struct ContentView: View {
             }
 
             Section("About") {
-                LabeledContent("Version", value: "3.2.1")
+                LabeledContent("Version", value: "3.2.2")
                 LabeledContent("Audio", value: "48 kHz / PCM16 / VBAN")
-                LabeledContent("Minimum iOS", value: "26.5")
-                LabeledContent("Toolchain", value: "Xcode 26.6 · iOS SDK 26.5")
+                LabeledContent("Minimum iOS", value: "18.5")
+                LabeledContent("Toolchain", value: "Xcode 16.4 · iOS SDK 18.5")
             }
         }
         .safeAreaPadding(.bottom, 86)
@@ -761,6 +769,13 @@ private enum AppSection: String, CaseIterable, Identifiable {
 private extension View {
     func glassCard() -> some View {
         self
-            .glassEffect(in: RoundedRectangle(cornerRadius: 26, style: .continuous))
+            .background {
+                RoundedRectangle(cornerRadius: 26, style: .continuous)
+                    .fill(.ultraThinMaterial)
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 26, style: .continuous)
+                            .strokeBorder(Color.white.opacity(0.12), lineWidth: 0.7)
+                    }
+            }
     }
 }

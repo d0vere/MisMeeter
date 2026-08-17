@@ -40,9 +40,9 @@ struct ContentView: View {
     @AppStorage("microphoneGainDB")
     private var gainDB = 12.0
 
-    @AppStorage("captureModeV17")
+    @AppStorage("captureModeV20")
     private var captureModeRaw =
-        CaptureMode.remoteIORaw.rawValue
+        CaptureMode.voiceProcessingIO.rawValue
 
     @AppStorage("transmissionModeV08")
     private var transmissionModeRaw =
@@ -201,8 +201,8 @@ struct ContentView: View {
             .disabled(isStreaming)
 
             Text(
-                "v1.9 keeps the audio-signaled TX worker but fixes the adaptive queue controller. " +
-                "Foreground floor is ~21 ms; true background floor is ~43 ms. Buffer changes are evaluated over real 5-second windows and only decay after 30 stable seconds."
+                "v2.0 uses a deterministic VBAN packet timeline driven by mach_wait_until(). " +
+                "Packets are scheduled on absolute 5.333 ms deadlines; late wakes catch up against the original timeline instead of redefining the clock."
             )
             .font(.caption)
             .foregroundStyle(.secondary)
@@ -655,7 +655,7 @@ struct ContentView: View {
                 )
 
                 LabeledContent(
-                    "TX wake lifetime max",
+                    "TX deadline max late",
                     value:
                         String(
                             format:
@@ -665,7 +665,7 @@ struct ContentView: View {
                 )
 
                 LabeledContent(
-                    "TX late wakes",
+                    "TX late deadlines",
                     value:
                         "\(txLateWakeCount)"
                 )

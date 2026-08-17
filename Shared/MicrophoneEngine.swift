@@ -39,6 +39,9 @@ final class MicrophoneEngine {
             capacityFrames: 96_000
         )
 
+    private let pacer =
+        MonotonicPacer()
+
     private let workerQueue =
         DispatchQueue(
             label: "dev.mismeeter.tx.worker",
@@ -56,6 +59,13 @@ final class MicrophoneEngine {
             count: VBANPacket.samplesPerPacket
         )
 
+    private let packetIntervalNS: UInt64 =
+        UInt64(
+            Double(VBANPacket.samplesPerPacket) /
+            VBANPacket.sampleRate *
+            1_000_000_000.0
+        )
+
     private let txControlLock =
         OSAllocatedUnfairLock(
             initialState:
@@ -63,39 +73,20 @@ final class MicrophoneEngine {
         )
 
     private struct TXControlState {
-        var targetFrames = 1024          // foreground floor: ~21.33 ms
-        var lifetimeMaxWakeGapMS: Double = 0
-        var recentMaxWakeGapMS: Double = 0
-        var lateWakeCount: UInt64 = 0
-        var catchUpPackets: UInt64 = 0
-        var lastWakeNS: UInt64?
-        var adaptationWindowStartNS: UInt64?
-        var stableSinceNS: UInt64?
+        var targetFrames = 2048          // default ≈42.67 ms
         var isBackground = false
+
+        var lifetimeMaxDeadlineLateMS: Double = 0
+        var recentMaxDeadlineLateMS: Double = 0
+        var lateDeadlineCount: UInt64 = 0
+        var catchUpPackets: UInt64 = 0
+
+        var nextDeadlineTicks: UInt64 = 0
+        var pacerPrimed = false
+
+        var adaptationWindowStartTicks: UInt64 = 0
+        var stableSinceTicks: UInt64 = 0
     }
-
-    private let gainLock =
-        OSAllocatedUnfairLock(
-            initialState: Float(12)
-        )
-
-    private let diagnosticsLock =
-        OSAllocatedUnfairLock(
-            initialState:
-                DiagnosticsState()
-        )
-
-    private struct DiagnosticsState {
-        var previousWallClockNS: UInt64?
-        var maxWallClockGapMS: Double = 0
-        var gapsOver10: UInt64 = 0
-        var gapsOver15: UInt64 = 0
-        var gapsOver25: UInt64 = 0
-        var gapsOver50: UInt64 = 0
-        var callbackCount: UInt64 = 0
-        var lastFrameCount = 0
-    }
-
     var onMeter: ((Float) -> Void)?
     var onAudioDiagnostics: ((Int, Double) -> Void)?
     var onVoiceProcessingState: ((Bool) -> Void)?
@@ -379,7 +370,7 @@ final class MicrophoneEngine {
         }
 
         txQueue.reset(
-            targetFrames: 1024
+            targetFrames: 2048
         )
 
         diagnosticsLock.withLock {
@@ -655,48 +646,62 @@ final class MicrophoneEngine {
     }
 
 
-    func setBackgroundMode(_ background: Bool) {
-        txControlLock.withLock { state in
-            state.isBackground = background
+    func setBackgroundMode(
+        _ background: Bool
+    ) {
+        let newTarget =
+            background
+            ? 3072       // 64.0 ms
+            : 2048       // 42.67 ms
 
-            let minimumTarget =
+        txControlLock.withLock {
+            state in
+
+            state.isBackground =
                 background
-                ? 2048   // ~42.67 ms
-                : 1024   // ~21.33 ms
 
-            if state.targetFrames < minimumTarget {
-                state.targetFrames = minimumTarget
-                txQueue.setTargetFrames(minimumTarget)
+            if state.targetFrames <
+                newTarget {
+                state.targetFrames =
+                    newTarget
             }
 
-            state.adaptationWindowStartNS =
-                DispatchTime.now().uptimeNanoseconds
-
-            state.stableSinceNS = nil
-            state.recentMaxWakeGapMS = 0
+            state.recentMaxDeadlineLateMS = 0
+            state.stableSinceTicks = 0
         }
+
+        txQueue.setTargetFrames(
+            max(
+                txQueue.targetFrames(),
+                newTarget
+            )
+        )
 
         workerSignal.signal()
     }
+
 
     private func startWorker() {
         stopWorker()
 
         workerRunning = true
 
-        workerQueue.async { [weak self] in
-            guard let self else { return }
+        workerQueue.async {
+            [weak self] in
 
+            guard let self else {
+                return
+            }
+
+            // A persistent task avoids repeatedly depending on Dispatch timer
+            // wakeups. Once primed, pacing is controlled by mach_wait_until()
+            // against an absolute monotonic timeline.
             while self.workerRunning {
-                _ = self.workerSignal.wait(
-                    timeout: .now() + .milliseconds(100)
-                )
-
-                if !self.workerRunning {
-                    break
+                if !self.waitUntilPrimed() {
+                    continue
                 }
 
-                self.handleWorkerWake()
+                self.runPacerCycle()
             }
         }
     }
@@ -704,187 +709,296 @@ final class MicrophoneEngine {
     private func stopWorker() {
         workerRunning = false
         workerSignal.signal()
+
+        txControlLock.withLock {
+            state in
+            state.pacerPrimed = false
+            state.nextDeadlineTicks = 0
+        }
     }
 
-    private func handleWorkerWake() {
-        let now = DispatchTime.now().uptimeNanoseconds
+    private func waitUntilPrimed() -> Bool {
+        while workerRunning {
+            let snapshot =
+                txQueue.snapshot()
 
-        txControlLock.withLock { state in
-            if let previous = state.lastWakeNS {
-                let gapMS =
-                    Double(now - previous) /
-                    1_000_000.0
+            if snapshot.bufferedFrames >=
+                snapshot.targetFrames {
 
-                state.lifetimeMaxWakeGapMS =
-                    max(
-                        state.lifetimeMaxWakeGapMS,
-                        gapMS
-                    )
+                let now =
+                    pacer.nowTicks()
 
-                state.recentMaxWakeGapMS =
-                    max(
-                        state.recentMaxWakeGapMS,
-                        gapMS
-                    )
+                txControlLock.withLock {
+                    state in
 
-                if gapMS > 10 {
-                    state.lateWakeCount &+= 1
+                    state.pacerPrimed = true
+                    state.nextDeadlineTicks =
+                        now
+
+                    state.adaptationWindowStartTicks =
+                        now
+
+                    state.stableSinceTicks = 0
                 }
+
+                return true
             }
 
-            state.lastWakeNS = now
+            _ = workerSignal.wait(
+                timeout:
+                    .now() +
+                    .milliseconds(100)
+            )
+        }
 
-            if state.adaptationWindowStartNS == nil {
-                state.adaptationWindowStartNS = now
+        return false
+    }
+
+    private func runPacerCycle() {
+        let deadline =
+            txControlLock.withLock {
+                $0.nextDeadlineTicks
+            }
+
+        pacer.wait(
+            until: deadline
+        )
+
+        guard workerRunning else {
+            return
+        }
+
+        let now =
+            pacer.nowTicks()
+
+        let lateTicks =
+            now > deadline
+            ? now - deadline
+            : 0
+
+        let lateMS =
+            Double(
+                pacer.nanoseconds(
+                    forTicks:
+                        lateTicks
+                )
+            ) /
+            1_000_000.0
+
+        txControlLock.withLock {
+            state in
+
+            state.lifetimeMaxDeadlineLateMS =
+                max(
+                    state.lifetimeMaxDeadlineLateMS,
+                    lateMS
+                )
+
+            state.recentMaxDeadlineLateMS =
+                max(
+                    state.recentMaxDeadlineLateMS,
+                    lateMS
+                )
+
+            if lateMS > 2.0 {
+                state.lateDeadlineCount &+= 1
             }
         }
 
-        drainTXQueue()
-        adaptTXTargetIfNeeded()
+        sendDuePackets(
+            nowTicks: now
+        )
+
+        adaptDeterministicTarget(
+            nowTicks: now
+        )
+
         publishCaptureLabDiagnostics()
     }
 
-    private func drainTXQueue() {
-        workerScratch.withUnsafeMutableBufferPointer {
-            pointer in
+    private func sendDuePackets(
+        nowTicks: UInt64
+    ) {
+        workerScratch
+            .withUnsafeMutableBufferPointer {
+                pointer in
 
-            guard let base =
-                pointer.baseAddress
-            else {
-                return
-            }
-
-            var sentThisWake = 0
-
-            // Maintain a small elastic buffer. Only transmit when queue
-            // occupancy is above target; if background scheduling delays us,
-            // drain multiple already-captured packets in one wake.
-            while true {
-                let snapshot =
-                    txQueue.snapshot()
-
-                let required =
-                    max(
-                        VBANPacket.samplesPerPacket,
-                        snapshot.targetFrames
-                    )
-
-                guard snapshot.bufferedFrames >= required else {
-                    break
+                guard let base =
+                    pointer.baseAddress
+                else {
+                    return
                 }
 
-                guard txQueue.readPacket(
-                    into: base
-                ) else {
-                    break
-                }
-
-                let packet =
-                    Array(
-                        UnsafeBufferPointer(
-                            start: base,
-                            count:
-                                VBANPacket.samplesPerPacket
-                        )
+                let intervalTicks =
+                    pacer.ticks(
+                        forNanoseconds:
+                            packetIntervalNS
                     )
 
-                transmitter.enqueue(packet)
+                var sent = 0
 
-                if sentThisWake > 0 {
-                    txControlLock.withLock {
-                        $0.catchUpPackets &+= 1
+                while workerRunning &&
+                        sent < 8 {
+                    let deadline =
+                        txControlLock
+                            .withLock {
+                                $0.nextDeadlineTicks
+                            }
+
+                    // The first packet for this cycle is always due.
+                    // Subsequent packets are catch-up packets only if their
+                    // absolute deadline has already passed.
+                    if sent > 0 &&
+                        nowTicks < deadline {
+                        break
                     }
+
+                    guard txQueue.readPacket(
+                        into: base
+                    ) else {
+                        // Capture has not supplied enough PCM. Re-prime instead
+                        // of transmitting artificial silence.
+                        txControlLock.withLock {
+                            state in
+                            state.pacerPrimed = false
+                        }
+
+                        return
+                    }
+
+                    let packet =
+                        Array(
+                            UnsafeBufferPointer(
+                                start: base,
+                                count:
+                                    VBANPacket.samplesPerPacket
+                            )
+                        )
+
+                    transmitter.enqueue(
+                        packet
+                    )
+
+                    txControlLock.withLock {
+                        state in
+
+                        if sent > 0 {
+                            state.catchUpPackets &+= 1
+                        }
+
+                        state.nextDeadlineTicks &+=
+                            intervalTicks
+                    }
+
+                    sent += 1
                 }
 
-                sentThisWake += 1
-
-                // Prevent pathological long bursts.
-                if sentThisWake >= 8 {
-                    break
-                }
+                // If scheduling was catastrophically late, do not reset the
+                // clock to "now". The next pacer cycle continues catching up
+                // from the original absolute timeline.
             }
-        }
     }
 
-    private func adaptTXTargetIfNeeded() {
-        let now =
-            DispatchTime.now().uptimeNanoseconds
+    private func adaptDeterministicTarget(
+        nowTicks: UInt64
+    ) {
+        let fiveSecondsTicks =
+            pacer.ticks(
+                forNanoseconds:
+                    5_000_000_000
+            )
+
+        let thirtySecondsTicks =
+            pacer.ticks(
+                forNanoseconds:
+                    30_000_000_000
+            )
 
         let snapshot =
             txQueue.snapshot()
 
-        var requestedTarget: Int?
+        var requestedTarget:
+            Int?
 
-        txControlLock.withLock { state in
-            guard let windowStart =
-                state.adaptationWindowStartNS
-            else {
-                state.adaptationWindowStartNS = now
+        txControlLock.withLock {
+            state in
+
+            if state.adaptationWindowStartTicks == 0 {
+                state.adaptationWindowStartTicks =
+                    nowTicks
                 return
             }
 
-            // Evaluate only once every 5 real seconds.
-            guard now - windowStart >=
-                    5_000_000_000
+            guard nowTicks -
+                    state.adaptationWindowStartTicks >=
+                    fiveSecondsTicks
             else {
                 return
             }
 
-            let minimumTarget =
+            let floor =
                 state.isBackground
-                ? 2048       // 42.67 ms
-                : 1024       // 21.33 ms
+                ? 3072   // 64 ms
+                : 2048   // 42.67 ms
 
-            let queueLow =
-                snapshot.bufferedFrames <
-                max(
-                    512,
-                    snapshot.targetFrames / 2
-                )
+            // If the pacer deadline was missed by more than one packet period,
+            // add two packets (~10.67 ms) of safety.
+            if state.recentMaxDeadlineLateMS >
+                5.5 {
 
-            // Any meaningful worker stall in the 5 s window increases
-            // safety by 512 frames (~10.67 ms), not just one packet.
-            if state.recentMaxWakeGapMS > 10 ||
-                queueLow {
                 let newTarget =
                     min(
-                        6144,  // 128 ms maximum
+                        8192,  // ~170.7 ms
                         max(
-                            minimumTarget,
-                            snapshot.targetFrames + 512
+                            floor,
+                            snapshot.targetFrames +
+                            512
                         )
                     )
 
-                requestedTarget = newTarget
-                state.targetFrames = newTarget
-                state.stableSinceNS = nil
+                requestedTarget =
+                    newTarget
+
+                state.targetFrames =
+                    newTarget
+
+                state.stableSinceTicks =
+                    0
             } else {
-                if state.stableSinceNS == nil {
-                    state.stableSinceNS = now
+                if state.stableSinceTicks == 0 {
+                    state.stableSinceTicks =
+                        nowTicks
                 }
 
-                // Do not lower the target until 30 real seconds have been
-                // continuously stable. This fixes v1.8's too-fast decay.
-                if let stableSince =
-                    state.stableSinceNS,
-                   now - stableSince >=
-                        30_000_000_000,
+                if nowTicks -
+                    state.stableSinceTicks >=
+                    thirtySecondsTicks,
                    snapshot.targetFrames >
-                        minimumTarget {
+                    floor {
+
                     let newTarget =
                         max(
-                            minimumTarget,
-                            snapshot.targetFrames - 256
+                            floor,
+                            snapshot.targetFrames -
+                            256
                         )
 
-                    requestedTarget = newTarget
-                    state.targetFrames = newTarget
-                    state.stableSinceNS = now
+                    requestedTarget =
+                        newTarget
+
+                    state.targetFrames =
+                        newTarget
+
+                    state.stableSinceTicks =
+                        nowTicks
                 }
             }
 
-            state.recentMaxWakeGapMS = 0
-            state.adaptationWindowStartNS = now
+            state.recentMaxDeadlineLateMS =
+                0
+
+            state.adaptationWindowStartTicks =
+                nowTicks
         }
 
         if let requestedTarget {
@@ -916,8 +1030,8 @@ final class MicrophoneEngine {
                 state in
 
                 (
-                    state.lifetimeMaxWakeGapMS,
-                    state.lateWakeCount,
+                    state.lifetimeMaxDeadlineLateMS,
+                    state.lateDeadlineCount,
                     state.catchUpPackets,
                     state.targetFrames
                 )

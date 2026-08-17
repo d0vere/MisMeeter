@@ -212,3 +212,47 @@ v1.9 fixes the adaptive TX queue controller:
 
 This corrects v1.8's bug where the target could rise after a late wake and then fall back to 21 ms
 within a fraction of a second because "stable windows" were accidentally counted per worker wake.
+
+
+## v2.0 Deterministic VBAN Clock
+
+The microphone capture path is unchanged because diagnostics showed:
+- 256-frame callback
+- ~5.33 ms I/O quantum
+- no microphone gaps >10 ms during lock
+- no capture queue overruns
+
+The TX worker is now paced by an absolute mach clock timeline.
+
+### Sender timeline
+
+- one VBAN packet = 256 samples
+- 48 kHz => 5.333333 ms per packet
+- `mach_wait_until()` waits for each absolute deadline
+- deadlines are advanced from the original timeline
+- a late wake never resets the sender clock to "now"
+- up to 8 already-due packets can be caught up in one cycle
+
+### Elastic prebuffer
+
+- foreground floor: 2048 frames ≈ 42.67 ms
+- background floor: 3072 frames = 64 ms
+- deadline miss >5.5 ms in a 5-second window: +512 frames ≈ +10.67 ms
+- maximum target: 8192 frames ≈ 170.67 ms
+- reduction only after 30 continuous stable seconds
+
+### Capture mode
+
+VoiceProcessingIO is the default for new v2.0 installs because on-device testing showed somewhat
+better lock-screen behaviour. RemoteIO Raw remains selectable.
+
+### Diagnostics
+
+- TX deadline max late
+- TX late deadlines
+- TX catch-up packets
+- TX target
+- TX network max gap
+- microphone callback gap counters
+
+Receiver remains unchanged.

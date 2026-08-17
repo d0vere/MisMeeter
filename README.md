@@ -131,3 +131,32 @@ a network-send interruption when the screen locks.
 A shared AudioSessionCoordinator configures `.playAndRecord + .defaultToSpeaker` and explicitly calls
 `overrideOutputAudioPort(.speaker)` when TX/RX are started. This prevents simultaneous RX+TX from
 falling back to the iPhone telephone receiver.
+
+
+## v1.7 Capture Lab
+
+Receiver path is unchanged from the stable v1.5/v1.6 implementation.
+
+TX microphone capture now has two selectable engines:
+- RemoteIO Raw
+- VoiceProcessingIO
+
+The Core Audio callback no longer performs VBAN transmission. It only:
+1. calls AudioUnitRender
+2. converts Float32 to PCM16 using preallocated scratch buffers
+3. writes PCM16 into a preallocated capture ring
+4. returns
+
+A separate high-priority worker drains that ring and feeds the existing direct UDP VBAN sender.
+
+New lock-screen diagnostics:
+- Mic callback max gap (monotonic wall clock)
+- gaps >10 ms
+- gaps >15 ms
+- gaps >25 ms
+- gaps >50 ms
+- capture ring frames
+- capture overruns
+
+These counters persist across screen lock so after unlocking it is clear whether capture itself was
+interrupted or whether the problem happened after capture.

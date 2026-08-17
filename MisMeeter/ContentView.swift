@@ -40,11 +40,9 @@ struct ContentView: View {
     @AppStorage("microphoneGainDB")
     private var gainDB = 12.0
 
-    @AppStorage("appleVoiceProcessing")
-    private var appleVoiceProcessing = false
-
-    @AppStorage("backgroundOutputKeepAlive")
-    private var backgroundOutputKeepAlive = true
+    @AppStorage("captureModeV17")
+    private var captureModeRaw =
+        CaptureMode.remoteIORaw.rawValue
 
     @AppStorage("transmissionModeV08")
     private var transmissionModeRaw =
@@ -99,6 +97,12 @@ struct ContentView: View {
     @State private var effectiveTXHz = 48_000.0
     @State private var maxSendGapMS = 0.0
     @State private var maxCaptureGapMS = 0.0
+    @State private var gapsOver10: UInt64 = 0
+    @State private var gapsOver15: UInt64 = 0
+    @State private var gapsOver25: UInt64 = 0
+    @State private var gapsOver50: UInt64 = 0
+    @State private var captureRingFrames = 0
+    @State private var captureRingOverruns: UInt64 = 0
 
     // ---------------- RX state ----------------
 
@@ -173,20 +177,28 @@ struct ContentView: View {
 
             txPresetEditor
 
-            Toggle(
-                "Apple Voice Processing",
-                isOn: $appleVoiceProcessing
-            )
-            .disabled(isStreaming)
-
-            Toggle(
-                "RemoteIO lock-screen mode",
-                isOn: $backgroundOutputKeepAlive
-            )
+            Picker(
+                "Capture engine",
+                selection:
+                    $captureModeRaw
+            ) {
+                ForEach(
+                    CaptureMode.allCases
+                ) { mode in
+                    Text(
+                        mode.title
+                    )
+                    .tag(
+                        mode.rawValue
+                    )
+                }
+            }
+            .pickerStyle(.segmented)
             .disabled(isStreaming)
 
             Text(
-                "Uses the low-level RemoteIO microphone capture path. This replaces AVAudioSinkNode and exposes the actual microphone callback gap while the phone is locked."
+                "Capture Lab compares raw RemoteIO with Apple's VoiceProcessingIO. " +
+                "The realtime callback now only renders/converts audio and writes to a preallocated PCM ring; VBAN transmission happens outside that callback."
             )
             .font(.caption)
             .foregroundStyle(.secondary)
@@ -607,6 +619,38 @@ struct ContentView: View {
                 )
 
                 LabeledContent(
+                    "Mic gaps >10 ms",
+                    value: "\(gapsOver10)"
+                )
+
+                LabeledContent(
+                    "Mic gaps >15 ms",
+                    value: "\(gapsOver15)"
+                )
+
+                LabeledContent(
+                    "Mic gaps >25 ms",
+                    value: "\(gapsOver25)"
+                )
+
+                LabeledContent(
+                    "Mic gaps >50 ms",
+                    value: "\(gapsOver50)"
+                )
+
+                LabeledContent(
+                    "Capture ring",
+                    value:
+                        "\(captureRingFrames) frames"
+                )
+
+                LabeledContent(
+                    "Capture overruns",
+                    value:
+                        "\(captureRingOverruns)"
+                )
+
+                LabeledContent(
                     "TX send errors",
                     value: "\(sendErrors)"
                 )
@@ -783,10 +827,12 @@ struct ContentView: View {
                     preset: preset,
                     gainDB: Float(gainDB),
                     transmissionMode: mode,
-                    voiceProcessingEnabled:
-                        appleVoiceProcessing,
-                    backgroundOutputKeepAlive:
-                        backgroundOutputKeepAlive
+                    captureMode:
+                        CaptureMode(
+                            rawValue:
+                                captureModeRaw
+                        ) ??
+                        .remoteIORaw
                 )
 
             isStreaming = true
@@ -909,6 +955,37 @@ struct ContentView: View {
                 DispatchQueue.main.async {
                     maxCaptureGapMS =
                         gapMS
+                }
+            }
+
+        MisMeeterRuntime.shared
+            .onCaptureLabDiagnostics = {
+                maxGap,
+                over10,
+                over15,
+                over25,
+                over50,
+                buffered,
+                overruns in
+
+                DispatchQueue.main.async {
+                    maxCaptureGapMS =
+                        maxGap
+
+                    gapsOver10 =
+                        over10
+                    gapsOver15 =
+                        over15
+                    gapsOver25 =
+                        over25
+                    gapsOver50 =
+                        over50
+
+                    captureRingFrames =
+                        buffered
+
+                    captureRingOverruns =
+                        overruns
                 }
             }
 

@@ -27,6 +27,7 @@ final class MisMeeterRuntime {
     var onBufferLevel: ((Int) -> Void)?
     var onAudioDiagnostics: ((Int, Double) -> Void)?
     var onCaptureGap: ((Double) -> Void)?
+    var onCaptureLabDiagnostics: ((Double, UInt64, UInt64, UInt64, UInt64, Int, UInt64) -> Void)?
     var onUnderruns: ((UInt64) -> Void)?
     var onPacketsSent: ((UInt64) -> Void)?
     var onPrimedChange: ((Bool) -> Void)?
@@ -50,8 +51,17 @@ final class MisMeeterRuntime {
             self?.onAudioDiagnostics?(frames, duration)
         }
 
-        microphone.onCaptureGap = { [weak self] gapMS in
-            self?.onCaptureGap?(gapMS)
+        microphone.onCaptureLabDiagnostics = { [weak self] maxGapMS, over10, over15, over25, over50, buffered, overruns in
+            self?.onCaptureGap?(maxGapMS)
+            self?.onCaptureLabDiagnostics?(
+                maxGapMS,
+                over10,
+                over15,
+                over25,
+                over50,
+                buffered,
+                overruns
+            )
         }
 
         microphone.onVoiceProcessingState = { [weak self] enabled in
@@ -128,8 +138,7 @@ final class MisMeeterRuntime {
         preset: VBANPreset,
         gainDB: Float,
         transmissionMode: VBANTransmissionMode,
-        voiceProcessingEnabled: Bool,
-        backgroundOutputKeepAlive: Bool = true
+        captureMode: CaptureMode
     ) async throws {
         stateQueue.sync {
             _preset = preset
@@ -147,8 +156,7 @@ final class MisMeeterRuntime {
 
         do {
             try microphone.start(
-                voiceProcessingEnabled: voiceProcessingEnabled,
-                backgroundOutputKeepAlive: backgroundOutputKeepAlive
+                captureMode: captureMode
             )
         } catch {
             transmitter.stop()

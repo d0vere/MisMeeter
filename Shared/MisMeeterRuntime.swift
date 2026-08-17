@@ -27,7 +27,7 @@ final class MisMeeterRuntime {
     var onBufferLevel: ((Int) -> Void)?
     var onAudioDiagnostics: ((Int, Double) -> Void)?
     var onCaptureGap: ((Double) -> Void)?
-    var onCaptureLabDiagnostics: ((Double, UInt64, UInt64, UInt64, UInt64, Int, UInt64) -> Void)?
+    var onCaptureLabDiagnostics: ((Double, UInt64, UInt64, UInt64, UInt64, Int, UInt64, Double, UInt64, UInt64, Int) -> Void)?
     var onUnderruns: ((UInt64) -> Void)?
     var onPacketsSent: ((UInt64) -> Void)?
     var onPrimedChange: ((Bool) -> Void)?
@@ -51,7 +51,7 @@ final class MisMeeterRuntime {
             self?.onAudioDiagnostics?(frames, duration)
         }
 
-        microphone.onCaptureLabDiagnostics = { [weak self] maxGapMS, over10, over15, over25, over50, buffered, overruns in
+        microphone.onCaptureLabDiagnostics = { [weak self] maxGapMS, over10, over15, over25, over50, buffered, overruns, txWakeGap, txLate, txCatchUp, txTarget in
             self?.onCaptureGap?(maxGapMS)
             self?.onCaptureLabDiagnostics?(
                 maxGapMS,
@@ -60,7 +60,11 @@ final class MisMeeterRuntime {
                 over25,
                 over50,
                 buffered,
-                overruns
+                overruns,
+                txWakeGap,
+                txLate,
+                txCatchUp,
+                txTarget
             )
         }
 

@@ -160,3 +160,35 @@ New lock-screen diagnostics:
 
 These counters persist across screen lock so after unlocking it is clear whether capture itself was
 interrupted or whether the problem happened after capture.
+
+
+## v1.8 Audio-Clocked TX
+
+The 2 ms DispatchSourceTimer from v1.7 has been removed.
+
+The microphone callback now:
+- renders audio
+- converts to PCM16
+- writes to a preallocated TX queue
+- signals a semaphore
+
+A persistent high-priority TX worker waits on that semaphore. There is no polling timer.
+
+TX uses a small adaptive elastic queue:
+- default target: 1024 frames ≈ 21.33 ms
+- if wake gaps exceed ~12 ms or the queue approaches empty: +256 frames
+- maximum target: 4096 frames ≈ 85.33 ms
+- after long stable operation: target falls gradually toward 21.33 ms
+
+If the worker wakes after several packets are already due, it can transmit multiple queued VBAN
+frames during the same wake, capped at 8 packets.
+
+New diagnostics:
+- TX wake max gap
+- TX late wakes
+- TX catch-up packets
+- TX queue
+- TX queue overruns
+- TX target
+
+Receiver remains unchanged.

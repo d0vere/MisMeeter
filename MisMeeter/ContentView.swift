@@ -103,6 +103,10 @@ struct ContentView: View {
     @State private var gapsOver50: UInt64 = 0
     @State private var captureRingFrames = 0
     @State private var captureRingOverruns: UInt64 = 0
+    @State private var txWakeMaxGapMS = 0.0
+    @State private var txLateWakeCount: UInt64 = 0
+    @State private var txCatchUpPackets: UInt64 = 0
+    @State private var txTargetFrames = 1024
 
     // ---------------- RX state ----------------
 
@@ -197,8 +201,8 @@ struct ContentView: View {
             .disabled(isStreaming)
 
             Text(
-                "Capture Lab compares raw RemoteIO with Apple's VoiceProcessingIO. " +
-                "The realtime callback now only renders/converts audio and writes to a preallocated PCM ring; VBAN transmission happens outside that callback."
+                "v1.8 keeps RemoteIO/VoiceProcessingIO but removes the 2 ms Dispatch timer. " +
+                "A persistent TX worker is signaled by the audio callback and uses an adaptive 21–85 ms elastic queue to absorb occasional lock-screen scheduling delays."
             )
             .font(.caption)
             .foregroundStyle(.secondary)
@@ -639,15 +643,49 @@ struct ContentView: View {
                 )
 
                 LabeledContent(
-                    "Capture ring",
+                    "TX queue",
                     value:
                         "\(captureRingFrames) frames"
                 )
 
                 LabeledContent(
-                    "Capture overruns",
+                    "TX queue overruns",
                     value:
                         "\(captureRingOverruns)"
+                )
+
+                LabeledContent(
+                    "TX wake max gap",
+                    value:
+                        String(
+                            format:
+                                "%.2f ms",
+                            txWakeMaxGapMS
+                        )
+                )
+
+                LabeledContent(
+                    "TX late wakes",
+                    value:
+                        "\(txLateWakeCount)"
+                )
+
+                LabeledContent(
+                    "TX catch-up packets",
+                    value:
+                        "\(txCatchUpPackets)"
+                )
+
+                LabeledContent(
+                    "TX target",
+                    value:
+                        String(
+                            format:
+                                "%.1f ms",
+                            Double(txTargetFrames) /
+                            VBANPacket.sampleRate *
+                            1000
+                        )
                 )
 
                 LabeledContent(
@@ -966,7 +1004,11 @@ struct ContentView: View {
                 over25,
                 over50,
                 buffered,
-                overruns in
+                overruns,
+                wakeGap,
+                lateWakes,
+                catchUps,
+                targetFrames in
 
                 DispatchQueue.main.async {
                     maxCaptureGapMS =
@@ -986,6 +1028,18 @@ struct ContentView: View {
 
                     captureRingOverruns =
                         overruns
+
+                    txWakeMaxGapMS =
+                        wakeGap
+
+                    txLateWakeCount =
+                        lateWakes
+
+                    txCatchUpPackets =
+                        catchUps
+
+                    txTargetFrames =
+                        targetFrames
                 }
             }
 

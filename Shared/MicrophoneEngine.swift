@@ -34,22 +34,42 @@ final class MicrophoneEngine {
     private var int16Scratch =
         [Int16](repeating: 0, count: 4096)
 
-    private var workerScratch =
-        [Int16](repeating: 0, count: 4096)
-
-    private let captureRing =
-        CaptureRingBuffer(
+    private let txQueue =
+        TXPacketQueue(
             capacityFrames: 96_000
         )
 
     private let workerQueue =
         DispatchQueue(
-            label: "dev.mismeeter.capture.worker",
+            label: "dev.mismeeter.tx.worker",
             qos: .userInteractive
         )
 
-    private var workerTimer:
-        DispatchSourceTimer?
+    private let workerSignal =
+        DispatchSemaphore(value: 0)
+
+    private var workerRunning = false
+
+    private var workerScratch =
+        [Int16](
+            repeating: 0,
+            count: VBANPacket.samplesPerPacket
+        )
+
+    private let txControlLock =
+        OSAllocatedUnfairLock(
+            initialState:
+                TXControlState()
+        )
+
+    private struct TXControlState {
+        var targetFrames = 1024          // ~21.33 ms
+        var maxWakeGapMS: Double = 0
+        var lateWakeCount: UInt64 = 0
+        var catchUpPackets: UInt64 = 0
+        var stableWindows = 0
+        var lastWakeNS: UInt64?
+    }
 
     private let gainLock =
         OSAllocatedUnfairLock(
@@ -77,7 +97,9 @@ final class MicrophoneEngine {
     var onAudioDiagnostics: ((Int, Double) -> Void)?
     var onVoiceProcessingState: ((Bool) -> Void)?
 
-    /// max gap, >10, >15, >25, >50, buffered, overruns
+    /// micMaxGap, >10, >15, >25, >50,
+    /// txBufferedFrames, txOverruns,
+    /// txWakeMaxGapMS, txLateWakeCount, txCatchUpPackets, txTargetFrames
     var onCaptureLabDiagnostics: ((
         Double,
         UInt64,
@@ -85,7 +107,11 @@ final class MicrophoneEngine {
         UInt64,
         UInt64,
         Int,
-        UInt64
+        UInt64,
+        Double,
+        UInt64,
+        UInt64,
+        Int
     ) -> Void)?
 
     init(
@@ -349,11 +375,17 @@ final class MicrophoneEngine {
                 )
         }
 
-        captureRing.reset()
+        txQueue.reset(
+            targetFrames: 1024
+        )
 
         diagnosticsLock.withLock {
             $0 =
                 DiagnosticsState()
+        }
+
+        txControlLock.withLock {
+            $0 = TXControlState()
         }
 
         startWorker()
@@ -537,10 +569,11 @@ final class MicrophoneEngine {
 
                         if let base =
                             intPointer.baseAddress {
-                            captureRing.write(
+                            txQueue.write(
                                 from: base,
                                 count: frames
                             )
+                            workerSignal.signal()
                         }
                     }
             }
@@ -618,105 +651,213 @@ final class MicrophoneEngine {
         }
     }
 
+
     private func startWorker() {
         stopWorker()
 
-        let timer =
-            DispatchSource
-                .makeTimerSource(
-                    queue:
-                        workerQueue
+        workerRunning = true
+
+        workerQueue.async { [weak self] in
+            guard let self else { return }
+
+            while self.workerRunning {
+                _ = self.workerSignal.wait(
+                    timeout: .now() + .milliseconds(100)
                 )
 
-        // Worker checks the ring every 2 ms. It does not define the audio
-        // clock; it merely transfers already-captured PCM to the VBAN sender.
-        timer.schedule(
-            deadline: .now(),
-            repeating:
-                .milliseconds(2),
-            leeway:
-                .microseconds(100)
-        )
+                if !self.workerRunning {
+                    break
+                }
 
-        timer.setEventHandler {
-            [weak self] in
-
-            self?.drainCaptureRing()
+                self.handleWorkerWake()
+            }
         }
-
-        workerTimer = timer
-        timer.resume()
     }
 
     private func stopWorker() {
-        workerTimer?
-            .setEventHandler {}
-
-        workerTimer?
-            .cancel()
-
-        workerTimer = nil
+        workerRunning = false
+        workerSignal.signal()
     }
 
-    private func drainCaptureRing() {
-        workerScratch
-            .withUnsafeMutableBufferPointer {
-                pointer in
+    private func handleWorkerWake() {
+        let now = DispatchTime.now().uptimeNanoseconds
 
-                guard let base =
-                    pointer.baseAddress
-                else {
-                    return
-                }
+        txControlLock.withLock { state in
+            if let previous = state.lastWakeNS {
+                let gapMS =
+                    Double(now - previous) /
+                    1_000_000.0
 
-                while true {
-                    let count =
-                        captureRing.read(
-                            into: base,
-                            maxCount:
-                                pointer.count
-                        )
+                state.maxWakeGapMS =
+                    max(
+                        state.maxWakeGapMS,
+                        gapMS
+                    )
 
-                    if count <= 0 {
-                        break
-                    }
-
-                    let samples =
-                        Array(
-                            UnsafeBufferPointer(
-                                start: base,
-                                count: count
-                            )
-                        )
-
-                    transmitter
-                        .enqueue(
-                            samples
-                        )
+                if gapMS > 10 {
+                    state.lateWakeCount &+= 1
                 }
             }
 
+            state.lastWakeNS = now
+        }
+
+        drainTXQueue()
+        adaptTXTargetIfNeeded()
         publishCaptureLabDiagnostics()
+    }
+
+    private func drainTXQueue() {
+        workerScratch.withUnsafeMutableBufferPointer {
+            pointer in
+
+            guard let base =
+                pointer.baseAddress
+            else {
+                return
+            }
+
+            var sentThisWake = 0
+
+            // Maintain a small elastic buffer. Only transmit when queue
+            // occupancy is above target; if background scheduling delays us,
+            // drain multiple already-captured packets in one wake.
+            while true {
+                let snapshot =
+                    txQueue.snapshot()
+
+                let required =
+                    max(
+                        VBANPacket.samplesPerPacket,
+                        snapshot.targetFrames
+                    )
+
+                guard snapshot.bufferedFrames >= required else {
+                    break
+                }
+
+                guard txQueue.readPacket(
+                    into: base
+                ) else {
+                    break
+                }
+
+                let packet =
+                    Array(
+                        UnsafeBufferPointer(
+                            start: base,
+                            count:
+                                VBANPacket.samplesPerPacket
+                        )
+                    )
+
+                transmitter.enqueue(packet)
+
+                if sentThisWake > 0 {
+                    txControlLock.withLock {
+                        $0.catchUpPackets &+= 1
+                    }
+                }
+
+                sentThisWake += 1
+
+                // Prevent pathological long bursts.
+                if sentThisWake >= 8 {
+                    break
+                }
+            }
+        }
+    }
+
+    private func adaptTXTargetIfNeeded() {
+        let snapshot =
+            txQueue.snapshot()
+
+        let control =
+            txControlLock.withLock {
+                $0
+            }
+
+        // If worker wake gaps are large or the queue gets too close to empty,
+        // add one 256-frame packet (~5.33 ms) of safety.
+        var newTarget =
+            snapshot.targetFrames
+
+        let nearEmpty =
+            snapshot.bufferedFrames <
+            snapshot.targetFrames / 2
+
+        if control.maxWakeGapMS > 12 ||
+            nearEmpty {
+            newTarget =
+                min(
+                    4096, // ~85.3 ms max
+                    snapshot.targetFrames +
+                    VBANPacket.samplesPerPacket
+                )
+
+            txControlLock.withLock {
+                $0.stableWindows = 0
+                $0.maxWakeGapMS = 0
+            }
+        } else {
+            txControlLock.withLock { state in
+                state.stableWindows += 1
+
+                if state.stableWindows >= 100 &&
+                    snapshot.targetFrames > 1024 {
+                    newTarget =
+                        max(
+                            1024,
+                            snapshot.targetFrames -
+                            VBANPacket.samplesPerPacket
+                        )
+                    state.stableWindows = 0
+                }
+            }
+        }
+
+        if newTarget !=
+            snapshot.targetFrames {
+            txQueue.setTargetFrames(
+                newTarget
+            )
+
+            txControlLock.withLock {
+                $0.targetFrames =
+                    newTarget
+            }
+        }
     }
 
     private func publishCaptureLabDiagnostics() {
         let diag =
-            diagnosticsLock
-                .withLock {
-                    state in
+            diagnosticsLock.withLock {
+                state in
 
-                    (
-                        state
-                            .maxWallClockGapMS,
-                        state.gapsOver10,
-                        state.gapsOver15,
-                        state.gapsOver25,
-                        state.gapsOver50
-                    )
-                }
+                (
+                    state.maxWallClockGapMS,
+                    state.gapsOver10,
+                    state.gapsOver15,
+                    state.gapsOver25,
+                    state.gapsOver50
+                )
+            }
 
-        let ringSnapshot =
-            captureRing.snapshot()
+        let queueSnapshot =
+            txQueue.snapshot()
+
+        let control =
+            txControlLock.withLock {
+                state in
+
+                (
+                    state.maxWakeGapMS,
+                    state.lateWakeCount,
+                    state.catchUpPackets,
+                    state.targetFrames
+                )
+            }
 
         onCaptureLabDiagnostics?(
             diag.0,
@@ -724,10 +865,12 @@ final class MicrophoneEngine {
             diag.2,
             diag.3,
             diag.4,
-            ringSnapshot
-                .bufferedFrames,
-            ringSnapshot
-                .overruns
+            queueSnapshot.bufferedFrames,
+            queueSnapshot.overruns,
+            control.0,
+            control.1,
+            control.2,
+            control.3
         )
     }
 

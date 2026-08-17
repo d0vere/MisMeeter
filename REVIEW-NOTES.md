@@ -1,6 +1,6 @@
-# MisMeeter 3.2.0 — iOS 26.6 UI / Duplex Live Activity
+# MisMeeter 3.2.1 — iOS 26.5 UI / Duplex Live Activity
 
-- Deployment target moved to iOS 26.6; custom cards/navigation use SwiftUI Liquid Glass APIs instead of material simulation.
+- Deployment target moved to iOS 26.5; custom cards/navigation use SwiftUI Liquid Glass APIs instead of material simulation.
 - Dynamic Island compact mode is symmetric: RX speaker at compact-leading, TX microphone at compact-trailing. Red indicates that channel is muted, green indicates active audio.
 - Expanded Live Activity title is intentionally only “Live” and exposes three large controls: RX mute, microphone mute, Stop All.
 - RX mute keeps the network receiver, jitter buffer, clock recovery and AVAudioEngine running; only playback output is attenuated to zero.
@@ -37,7 +37,7 @@ The 3.0 transmitter removes that scheduler boundary. Each 48 kHz Core Audio call
 - App icon size/source manually inspected.
 - Old TX worker/workgroup references removed.
 
-A full iOS SDK semantic build cannot run in this Linux environment. GitHub Actions is configured to perform that build using `macos-26` and requires Xcode 26.6+.
+A full iOS SDK semantic build cannot run in this Linux environment. GitHub Actions is configured to perform that build using `macos-26` and requires Xcode 26.6 exactly or newer compatible toolchain.
 
 ## Device test checklist
 1. Sign both targets with App Group `group.dev.mismeeter.app` enabled.
@@ -57,3 +57,13 @@ A full iOS SDK semantic build cannot run in this Linux environment. GitHub Actio
 - Navigation order is Home (TX), Receive (RX Home), Presets, Settings.
 - The former Monitor screen is integrated into Settings as Transport, Core Audio and Receiver diagnostic sections.
 - Small and medium widgets expose both Mute and Stop while TX is active.
+
+## 3.2.1 CI build fix
+
+- GitHub Actions now selects `/Applications/Xcode_26.6.app/Contents/Developer` explicitly through both `DEVELOPER_DIR` and `xcode-select`.
+- The workflow verifies `xcodebuild -version` before project generation and aborts immediately when Xcode is older than 26.6.
+- The workflow separately verifies `xcrun --sdk iphoneos --show-sdk-version` and requires iOS SDK 26.5 or newer.
+- Deployment target is now 26.5. This is intentional: Xcode 26.6 ships the iOS 26.5 SDK, not an iOS 26.6 SDK.
+- Native SwiftUI Liquid Glass (`glassEffect`) remains enabled; no iOS 18 compatibility fallback was introduced.
+- App and widget versions are 3.2.1 (build 33).
+- CI artifact is now `MisMeeter-3.2.1-unsigned.ipa`.

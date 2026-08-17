@@ -562,10 +562,10 @@ struct ContentView: View {
             }
 
             Section("About") {
-                LabeledContent("Version", value: "3.2.0")
+                LabeledContent("Version", value: "3.2.1")
                 LabeledContent("Audio", value: "48 kHz / PCM16 / VBAN")
-                LabeledContent("Minimum iOS", value: "26.6")
-                LabeledContent("Optimized SDK", value: "iOS 26 / Xcode 26.6")
+                LabeledContent("Minimum iOS", value: "26.5")
+                LabeledContent("Toolchain", value: "Xcode 26.6 · iOS SDK 26.5")
             }
         }
         .safeAreaPadding(.bottom, 86)

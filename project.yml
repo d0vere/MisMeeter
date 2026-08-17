@@ -3,12 +3,12 @@ name: MisMeeter
 options:
   bundleIdPrefix: dev.mismeeter
   deploymentTarget:
-    iOS: "26.6"
+    iOS: "26.5"
 
 settings:
   base:
     SWIFT_VERSION: "5.0"
-    IPHONEOS_DEPLOYMENT_TARGET: "26.6"
+    IPHONEOS_DEPLOYMENT_TARGET: "26.5"
     TARGETED_DEVICE_FAMILY: "1"
 
 schemes:
@@ -34,8 +34,8 @@ targets:
         CFBundleInfoDictionaryVersion: "6.0"
         CFBundleName: $(PRODUCT_NAME)
         CFBundlePackageType: APPL
-        CFBundleShortVersionString: "3.2.0"
-        CFBundleVersion: "32"
+        CFBundleShortVersionString: "3.2.1"
+        CFBundleVersion: "33"
         LSRequiresIPhoneOS: true
         NSSupportsLiveActivities: true
         NSMicrophoneUsageDescription: "MisMeeter uses the iPhone microphone to transmit live audio to your VBAN destination."
@@ -80,8 +80,8 @@ targets:
         CFBundleInfoDictionaryVersion: "6.0"
         CFBundleName: $(PRODUCT_NAME)
         CFBundlePackageType: XPC!
-        CFBundleShortVersionString: "3.2.0"
-        CFBundleVersion: "32"
+        CFBundleShortVersionString: "3.2.1"
+        CFBundleVersion: "33"
         NSExtension:
           NSExtensionPointIdentifier: com.apple.widgetkit-extension
     settings:

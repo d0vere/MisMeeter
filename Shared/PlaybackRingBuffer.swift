@@ -19,6 +19,8 @@ final class PlaybackRingBuffer {
 
     private let capacityFrames: Int
     private let storage: UnsafeMutablePointer<Float>
+    private let scratchLeft: UnsafeMutablePointer<Float>
+    private let scratchRight: UnsafeMutablePointer<Float>
     private let lock = OSAllocatedUnfairLock(
         initialState: State()
     )
@@ -32,10 +34,27 @@ final class PlaybackRingBuffer {
             repeating: 0,
             count: capacityFrames * 2
         )
+
+        scratchLeft = .allocate(
+            capacity: 4096
+        )
+        scratchRight = .allocate(
+            capacity: 4096
+        )
+        scratchLeft.initialize(
+            repeating: 0,
+            count: 4096
+        )
+        scratchRight.initialize(
+            repeating: 0,
+            count: 4096
+        )
     }
 
     deinit {
         storage.deallocate()
+        scratchLeft.deallocate()
+        scratchRight.deallocate()
     }
 
     func reset(targetFrames: Int) {
@@ -83,17 +102,22 @@ final class PlaybackRingBuffer {
         }
     }
 
-    /// Realtime audio-thread read. No allocation.
+    /// Realtime audio-thread read. No heap allocation.
+    /// The lock closure touches only object-owned storage. The caller's
+    /// UnsafeMutablePointers are written after the @Sendable lock closure,
+    /// avoiding Swift 6 Sendable diagnostics.
     func render(
         frameCount: Int,
         left: UnsafeMutablePointer<Float>,
         right: UnsafeMutablePointer<Float>
     ) {
+        let frames = min(frameCount, 4096)
+
         lock.withLock { state in
             if !state.primed {
-                for i in 0..<frameCount {
-                    left[i] = 0
-                    right[i] = 0
+                for i in 0..<frames {
+                    scratchLeft[i] = 0
+                    scratchRight[i] = 0
                 }
 
                 if state.countFrames >= state.targetFrames {
@@ -105,26 +129,43 @@ final class PlaybackRingBuffer {
 
             var rendered = 0
 
-            while rendered < frameCount &&
+            while rendered < frames &&
                     state.countFrames > 0 {
                 let base = state.readFrame * 2
-                left[rendered] = storage[base]
-                right[rendered] = storage[base + 1]
+
+                scratchLeft[rendered] =
+                    storage[base]
+
+                scratchRight[rendered] =
+                    storage[base + 1]
 
                 state.readFrame =
                     (state.readFrame + 1) % capacityFrames
+
                 state.countFrames -= 1
                 rendered += 1
             }
 
-            if rendered < frameCount {
-                for i in rendered..<frameCount {
-                    left[i] = 0
-                    right[i] = 0
+            if rendered < frames {
+                for i in rendered..<frames {
+                    scratchLeft[i] = 0
+                    scratchRight[i] = 0
                 }
 
                 state.underflows &+= 1
                 state.primed = false
+            }
+        }
+
+        for i in 0..<frames {
+            left[i] = scratchLeft[i]
+            right[i] = scratchRight[i]
+        }
+
+        if frameCount > frames {
+            for i in frames..<frameCount {
+                left[i] = 0
+                right[i] = 0
             }
         }
     }

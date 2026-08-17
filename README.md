@@ -62,3 +62,9 @@ Start around 100 ms.
 When microphone TX is active, MisMeeter uses playAndRecord so speaker RX can run at the same time.
 Stopping TX does not deactivate the iOS audio session when RX is still active, and stopping RX does
 not deactivate it while TX is still active.
+
+
+## v1.3.1 build fix
+
+- Fixed Swift exclusivity error in `VBANReceiver.drainSocket()` by caching packet capacity before `withUnsafeMutableBytes`.
+- Removed Swift 6 `UnsafeMutablePointer` Sendable warnings from `PlaybackRingBuffer.render()` by keeping caller output pointers outside the lock closure.

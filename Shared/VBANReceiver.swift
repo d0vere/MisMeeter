@@ -326,12 +326,14 @@ final class VBANReceiver {
         var packet =
             [UInt8](repeating: 0, count: 2048)
 
+        let packetCapacity = packet.count
+
         while true {
-            let count = packet.withUnsafeMutableBytes {
+            let count = packet.withUnsafeMutableBytes { rawBuffer in
                 Darwin.recv(
                     socketFD,
-                    $0.baseAddress,
-                    packet.count,
+                    rawBuffer.baseAddress,
+                    packetCapacity,
                     0
                 )
             }

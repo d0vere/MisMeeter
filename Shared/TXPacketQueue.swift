@@ -94,6 +94,51 @@ final class TXPacketQueue {
         lock.withLock { $0.targetFrames }
     }
 
+
+    /// Drop oldest complete VBAN packets until no more than maxFrames remain.
+    /// Returns the number of frames discarded.
+    @discardableResult
+    func trimToNewest(
+        maxFrames: Int
+    ) -> Int {
+        lock.withLock { state in
+            let wanted =
+                max(
+                    VBANPacket.samplesPerPacket,
+                    min(capacity, maxFrames)
+                )
+
+            guard state.count > wanted else {
+                return 0
+            }
+
+            let excess =
+                state.count - wanted
+
+            let alignedDrop =
+                excess -
+                (
+                    excess %
+                    VBANPacket.samplesPerPacket
+                )
+
+            guard alignedDrop > 0 else {
+                return 0
+            }
+
+            state.readIndex =
+                (
+                    state.readIndex +
+                    alignedDrop
+                ) %
+                capacity
+
+            state.count -= alignedDrop
+
+            return alignedDrop
+        }
+    }
+
     func snapshot() -> Snapshot {
         lock.withLock { state in
             Snapshot(

@@ -214,45 +214,28 @@ This corrects v1.8's bug where the target could rise after a late wake and then 
 within a fraction of a second because "stable windows" were accidentally counted per worker wake.
 
 
-## v2.0 Deterministic VBAN Clock
+## v2.1 Audio Workgroup TX
 
-The microphone capture path is unchanged because diagnostics showed:
-- 256-frame callback
-- ~5.33 ms I/O quantum
-- no microphone gaps >10 ms during lock
-- no capture queue overruns
+This release is based on v1.9, not v2.0.
 
-The TX worker is now paced by an absolute mach clock timeline.
+Apple Audio Workgroups let auxiliary real-time threads tell the scheduler that they are working
+toward the same audio deadline as the RemoteIO/VoiceProcessingIO I/O thread.
 
-### Sender timeline
+v2.1:
+- retrieves `kAudioOutputUnitProperty_OSWorkgroup` from the active I/O Audio Unit
+- joins the persistent TX worker with `os_workgroup_join`
+- leaves the workgroup when TX stops
+- VoiceProcessingIO is the default capture engine
+- fixed TX target: ~32 ms foreground, ~48 ms background
+- no adaptive climb toward 100+ ms
+- no mach_wait_until deterministic pacer
+- no 8-packet catch-up burst
+- worker wake notifications are coalesced rather than accumulated
+- if a long stall leaves stale PCM queued, whole old VBAN packets are discarded so the sender
+  resumes near live audio instead of sending a delayed UDP burst
 
-- one VBAN packet = 256 samples
-- 48 kHz => 5.333333 ms per packet
-- `mach_wait_until()` waits for each absolute deadline
-- deadlines are advanced from the original timeline
-- a late wake never resets the sender clock to "now"
-- up to 8 already-due packets can be caught up in one cycle
+New diagnostic:
+- Audio Workgroup: Joined / Unavailable
 
-### Elastic prebuffer
-
-- foreground floor: 2048 frames ≈ 42.67 ms
-- background floor: 3072 frames = 64 ms
-- deadline miss >5.5 ms in a 5-second window: +512 frames ≈ +10.67 ms
-- maximum target: 8192 frames ≈ 170.67 ms
-- reduction only after 30 continuous stable seconds
-
-### Capture mode
-
-VoiceProcessingIO is the default for new v2.0 installs because on-device testing showed somewhat
-better lock-screen behaviour. RemoteIO Raw remains selectable.
-
-### Diagnostics
-
-- TX deadline max late
-- TX late deadlines
-- TX catch-up packets
-- TX target
-- TX network max gap
-- microphone callback gap counters
-
+The previous "TX catch-up packets" diagnostic is now "TX stale packets dropped".
 Receiver remains unchanged.

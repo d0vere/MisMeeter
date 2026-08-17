@@ -3,6 +3,17 @@ import AudioToolbox
 import Foundation
 import os
 
+
+@_silgen_name("MisMeeterJoinAudioUnitWorkgroup")
+private func MisMeeterJoinAudioUnitWorkgroup(
+    _ audioUnit: AudioUnit?
+) -> UnsafeMutableRawPointer?
+
+@_silgen_name("MisMeeterLeaveAudioUnitWorkgroup")
+private func MisMeeterLeaveAudioUnitWorkgroup(
+    _ token: UnsafeMutableRawPointer?
+)
+
 enum MicrophoneEngineError: LocalizedError {
     case noInput
     case audioUnitCreation(OSStatus)
@@ -39,9 +50,6 @@ final class MicrophoneEngine {
             capacityFrames: 96_000
         )
 
-    private let pacer =
-        MonotonicPacer()
-
     private let workerQueue =
         DispatchQueue(
             label: "dev.mismeeter.tx.worker",
@@ -51,19 +59,21 @@ final class MicrophoneEngine {
     private let workerSignal =
         DispatchSemaphore(value: 0)
 
+    // Coalesce many audio callbacks into one worker wake instead of allowing
+    // semaphore counts to build into a later UDP burst.
+    private let workerWakePending =
+        OSAllocatedUnfairLock(
+            initialState: false
+        )
+
     private var workerRunning = false
+
+    private var audioWorkgroupJoined = false
 
     private var workerScratch =
         [Int16](
             repeating: 0,
             count: VBANPacket.samplesPerPacket
-        )
-
-    private let packetIntervalNS: UInt64 =
-        UInt64(
-            Double(VBANPacket.samplesPerPacket) /
-            VBANPacket.sampleRate *
-            1_000_000_000.0
         )
 
     private let txControlLock =
@@ -73,21 +83,14 @@ final class MicrophoneEngine {
         )
 
     private struct TXControlState {
-        var targetFrames = 2048          // default ≈42.67 ms
+        var targetFrames = 1536          // ~32 ms foreground
         var isBackground = false
 
-        var lifetimeMaxDeadlineLateMS: Double = 0
-        var recentMaxDeadlineLateMS: Double = 0
-        var lateDeadlineCount: UInt64 = 0
-        var catchUpPackets: UInt64 = 0
-
-        var nextDeadlineTicks: UInt64 = 0
-        var pacerPrimed = false
-
-        var adaptationWindowStartTicks: UInt64 = 0
-        var stableSinceTicks: UInt64 = 0
+        var lifetimeMaxWakeGapMS: Double = 0
+        var lateWakeCount: UInt64 = 0
+        var staleFramesDropped: UInt64 = 0
+        var lastWakeNS: UInt64?
     }
-
     private let gainLock =
         OSAllocatedUnfairLock(
             initialState: Float(12)
@@ -116,7 +119,7 @@ final class MicrophoneEngine {
 
     /// micMaxGap, >10, >15, >25, >50,
     /// txBufferedFrames, txOverruns,
-    /// txWakeMaxGapMS, txLateWakeCount, txCatchUpPackets, txTargetFrames
+    /// txWakeMaxGapMS, txLateWakeCount, txDroppedPackets, txTargetFrames
     var onCaptureLabDiagnostics: ((
         Double,
         UInt64,
@@ -130,6 +133,8 @@ final class MicrophoneEngine {
         UInt64,
         Int
     ) -> Void)?
+
+    var onAudioWorkgroupState: ((Bool) -> Void)?
 
     init(
         transmitter: VBANTransmitter
@@ -393,7 +398,7 @@ final class MicrophoneEngine {
         }
 
         txQueue.reset(
-            targetFrames: 2048
+            targetFrames: 1536
         )
 
         diagnosticsLock.withLock {
@@ -405,15 +410,12 @@ final class MicrophoneEngine {
             $0 = TXControlState()
         }
 
-        startWorker()
-
         status =
             AudioOutputUnitStart(
                 unit
             )
 
         guard status == noErr else {
-            stopWorker()
             cleanupAudioUnit()
 
             throw MicrophoneEngineError
@@ -421,6 +423,8 @@ final class MicrophoneEngine {
                     status
                 )
         }
+
+        startWorker()
 
         onVoiceProcessingState?(
             voiceProcessing
@@ -590,7 +594,23 @@ final class MicrophoneEngine {
                                 from: base,
                                 count: frames
                             )
-                            workerSignal.signal()
+
+                            let shouldSignal =
+                                workerWakePending
+                                    .withLock {
+                                        pending in
+
+                                        if pending {
+                                            return false
+                                        }
+
+                                        pending = true
+                                        return true
+                                    }
+
+                            if shouldSignal {
+                                workerSignal.signal()
+                            }
                         }
                     }
             }
@@ -672,10 +692,10 @@ final class MicrophoneEngine {
     func setBackgroundMode(
         _ background: Bool
     ) {
-        let newTarget =
+        let target =
             background
-            ? 3072       // 64.0 ms
-            : 2048       // 42.67 ms
+            ? 2304       // 48 ms
+            : 1536       // 32 ms
 
         txControlLock.withLock {
             state in
@@ -683,26 +703,16 @@ final class MicrophoneEngine {
             state.isBackground =
                 background
 
-            if state.targetFrames <
-                newTarget {
-                state.targetFrames =
-                    newTarget
-            }
-
-            state.recentMaxDeadlineLateMS = 0
-            state.stableSinceTicks = 0
+            state.targetFrames =
+                target
         }
 
         txQueue.setTargetFrames(
-            max(
-                txQueue.targetFrames(),
-                newTarget
-            )
+            target
         )
 
-        workerSignal.signal()
+        signalWorkerIfNeeded()
     }
-
 
     private func startWorker() {
         stopWorker()
@@ -716,132 +726,179 @@ final class MicrophoneEngine {
                 return
             }
 
-            // A persistent task avoids repeatedly depending on Dispatch timer
-            // wakeups. Once primed, pacing is controlled by mach_wait_until()
-            // against an absolute monotonic timeline.
+            let token =
+                MisMeeterJoinAudioUnitWorkgroup(
+                    self.audioUnit
+                )
+
+            self.audioWorkgroupJoined =
+                token != nil
+
+            self.onAudioWorkgroupState?(
+                token != nil
+            )
+
+            defer {
+                MisMeeterLeaveAudioUnitWorkgroup(
+                    token
+                )
+
+                self.audioWorkgroupJoined =
+                    false
+
+                self.onAudioWorkgroupState?(
+                    false
+                )
+            }
+
             while self.workerRunning {
-                if !self.waitUntilPrimed() {
-                    continue
+                _ = self.workerSignal.wait(
+                    timeout:
+                        .now() +
+                        .milliseconds(100)
+                )
+
+                if !self.workerRunning {
+                    break
                 }
 
-                self.runPacerCycle()
+                self.workerWakePending
+                    .withLock {
+                        $0 = false
+                    }
+
+                self.handleWorkerWake()
+
+                // If audio arrived while the worker was executing, schedule
+                // exactly one more wake. This is an event, not a backlog count.
+                self.signalWorkerIfNeeded()
             }
         }
     }
 
     private func stopWorker() {
         workerRunning = false
+
+        workerWakePending
+            .withLock {
+                $0 = false
+            }
+
         workerSignal.signal()
-
-        txControlLock.withLock {
-            state in
-            state.pacerPrimed = false
-            state.nextDeadlineTicks = 0
-        }
     }
 
-    private func waitUntilPrimed() -> Bool {
-        while workerRunning {
-            let snapshot =
-                txQueue.snapshot()
-
-            if snapshot.bufferedFrames >=
-                snapshot.targetFrames {
-
-                let now =
-                    pacer.nowTicks()
-
-                txControlLock.withLock {
-                    state in
-
-                    state.pacerPrimed = true
-                    state.nextDeadlineTicks =
-                        now
-
-                    state.adaptationWindowStartTicks =
-                        now
-
-                    state.stableSinceTicks = 0
-                }
-
-                return true
-            }
-
-            _ = workerSignal.wait(
-                timeout:
-                    .now() +
-                    .milliseconds(100)
-            )
-        }
-
-        return false
-    }
-
-    private func runPacerCycle() {
-        let deadline =
-            txControlLock.withLock {
-                $0.nextDeadlineTicks
-            }
-
-        pacer.wait(
-            until: deadline
-        )
-
+    private func signalWorkerIfNeeded() {
         guard workerRunning else {
             return
         }
 
+        let snapshot =
+            txQueue.snapshot()
+
+        guard snapshot.bufferedFrames >=
+                snapshot.targetFrames
+        else {
+            return
+        }
+
+        let shouldSignal =
+            workerWakePending
+                .withLock {
+                    pending in
+
+                    if pending {
+                        return false
+                    }
+
+                    pending = true
+                    return true
+                }
+
+        if shouldSignal {
+            workerSignal.signal()
+        }
+    }
+
+    private func handleWorkerWake() {
         let now =
-            pacer.nowTicks()
-
-        let lateTicks =
-            now > deadline
-            ? now - deadline
-            : 0
-
-        let lateMS =
-            Double(
-                pacer.nanoseconds(
-                    forTicks:
-                        lateTicks
-                )
-            ) /
-            1_000_000.0
+            DispatchTime
+                .now()
+                .uptimeNanoseconds
 
         txControlLock.withLock {
             state in
 
-            state.lifetimeMaxDeadlineLateMS =
-                max(
-                    state.lifetimeMaxDeadlineLateMS,
-                    lateMS
-                )
+            if let previous =
+                state.lastWakeNS {
+                let gapMS =
+                    Double(
+                        now - previous
+                    ) /
+                    1_000_000.0
 
-            state.recentMaxDeadlineLateMS =
-                max(
-                    state.recentMaxDeadlineLateMS,
-                    lateMS
-                )
+                state.lifetimeMaxWakeGapMS =
+                    max(
+                        state.lifetimeMaxWakeGapMS,
+                        gapMS
+                    )
 
-            if lateMS > 2.0 {
-                state.lateDeadlineCount &+= 1
+                if gapMS > 10 {
+                    state.lateWakeCount &+= 1
+                }
             }
+
+            state.lastWakeNS =
+                now
         }
 
-        sendDuePackets(
-            nowTicks: now
-        )
-
-        adaptDeterministicTarget(
-            nowTicks: now
-        )
-
+        trimStaleAudioIfNeeded()
+        sendExactlyOnePacket()
         publishCaptureLabDiagnostics()
     }
 
-    private func sendDuePackets(
-        nowTicks: UInt64
-    ) {
+    private func trimStaleAudioIfNeeded() {
+        let snapshot =
+            txQueue.snapshot()
+
+        // We intentionally do NOT catch up with a UDP burst. If the worker
+        // was delayed badly enough to accumulate lots of old PCM, retain the
+        // newest target + one packet and discard stale whole packets.
+        let maxBuffered =
+            snapshot.targetFrames +
+            VBANPacket.samplesPerPacket
+
+        guard snapshot.bufferedFrames >
+                maxBuffered
+        else {
+            return
+        }
+
+        let dropped =
+            txQueue.trimToNewest(
+                maxFrames:
+                    maxBuffered
+            )
+
+        if dropped > 0 {
+            txControlLock.withLock {
+                state in
+
+                state.staleFramesDropped &+=
+                    UInt64(dropped)
+            }
+        }
+    }
+
+    private func sendExactlyOnePacket() {
+        let snapshot =
+            txQueue.snapshot()
+
+        guard snapshot.bufferedFrames >=
+                snapshot.targetFrames
+        else {
+            return
+        }
+
         workerScratch
             .withUnsafeMutableBufferPointer {
                 pointer in
@@ -852,183 +909,25 @@ final class MicrophoneEngine {
                     return
                 }
 
-                let intervalTicks =
-                    pacer.ticks(
-                        forNanoseconds:
-                            packetIntervalNS
-                    )
-
-                var sent = 0
-
-                while workerRunning &&
-                        sent < 8 {
-                    let deadline =
-                        txControlLock
-                            .withLock {
-                                $0.nextDeadlineTicks
-                            }
-
-                    // The first packet for this cycle is always due.
-                    // Subsequent packets are catch-up packets only if their
-                    // absolute deadline has already passed.
-                    if sent > 0 &&
-                        nowTicks < deadline {
-                        break
-                    }
-
-                    guard txQueue.readPacket(
-                        into: base
-                    ) else {
-                        // Capture has not supplied enough PCM. Re-prime instead
-                        // of transmitting artificial silence.
-                        txControlLock.withLock {
-                            state in
-                            state.pacerPrimed = false
-                        }
-
-                        return
-                    }
-
-                    let packet =
-                        Array(
-                            UnsafeBufferPointer(
-                                start: base,
-                                count:
-                                    VBANPacket.samplesPerPacket
-                            )
-                        )
-
-                    transmitter.enqueue(
-                        packet
-                    )
-
-                    txControlLock.withLock {
-                        state in
-
-                        if sent > 0 {
-                            state.catchUpPackets &+= 1
-                        }
-
-                        state.nextDeadlineTicks &+=
-                            intervalTicks
-                    }
-
-                    sent += 1
+                guard txQueue.readPacket(
+                    into: base
+                ) else {
+                    return
                 }
 
-                // If scheduling was catastrophically late, do not reset the
-                // clock to "now". The next pacer cycle continues catching up
-                // from the original absolute timeline.
-            }
-    }
-
-    private func adaptDeterministicTarget(
-        nowTicks: UInt64
-    ) {
-        let fiveSecondsTicks =
-            pacer.ticks(
-                forNanoseconds:
-                    5_000_000_000
-            )
-
-        let thirtySecondsTicks =
-            pacer.ticks(
-                forNanoseconds:
-                    30_000_000_000
-            )
-
-        let snapshot =
-            txQueue.snapshot()
-
-        var requestedTarget:
-            Int?
-
-        txControlLock.withLock {
-            state in
-
-            if state.adaptationWindowStartTicks == 0 {
-                state.adaptationWindowStartTicks =
-                    nowTicks
-                return
-            }
-
-            guard nowTicks -
-                    state.adaptationWindowStartTicks >=
-                    fiveSecondsTicks
-            else {
-                return
-            }
-
-            let floor =
-                state.isBackground
-                ? 3072   // 64 ms
-                : 2048   // 42.67 ms
-
-            // If the pacer deadline was missed by more than one packet period,
-            // add two packets (~10.67 ms) of safety.
-            if state.recentMaxDeadlineLateMS >
-                5.5 {
-
-                let newTarget =
-                    min(
-                        8192,  // ~170.7 ms
-                        max(
-                            floor,
-                            snapshot.targetFrames +
-                            512
+                let packet =
+                    Array(
+                        UnsafeBufferPointer(
+                            start: base,
+                            count:
+                                VBANPacket.samplesPerPacket
                         )
                     )
 
-                requestedTarget =
-                    newTarget
-
-                state.targetFrames =
-                    newTarget
-
-                state.stableSinceTicks =
-                    0
-            } else {
-                if state.stableSinceTicks == 0 {
-                    state.stableSinceTicks =
-                        nowTicks
-                }
-
-                if nowTicks -
-                    state.stableSinceTicks >=
-                    thirtySecondsTicks,
-                   snapshot.targetFrames >
-                    floor {
-
-                    let newTarget =
-                        max(
-                            floor,
-                            snapshot.targetFrames -
-                            256
-                        )
-
-                    requestedTarget =
-                        newTarget
-
-                    state.targetFrames =
-                        newTarget
-
-                    state.stableSinceTicks =
-                        nowTicks
-                }
+                transmitter.enqueue(
+                    packet
+                )
             }
-
-            state.recentMaxDeadlineLateMS =
-                0
-
-            state.adaptationWindowStartTicks =
-                nowTicks
-        }
-
-        if let requestedTarget {
-            txQueue.setTargetFrames(
-                requestedTarget
-            )
-        }
     }
 
     private func publishCaptureLabDiagnostics() {
@@ -1053,9 +952,12 @@ final class MicrophoneEngine {
                 state in
 
                 (
-                    state.lifetimeMaxDeadlineLateMS,
-                    state.lateDeadlineCount,
-                    state.catchUpPackets,
+                    state.lifetimeMaxWakeGapMS,
+                    state.lateWakeCount,
+                    state.staleFramesDropped /
+                        UInt64(
+                            VBANPacket.samplesPerPacket
+                        ),
                     state.targetFrames
                 )
             }

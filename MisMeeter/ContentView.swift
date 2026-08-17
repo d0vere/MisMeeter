@@ -40,7 +40,7 @@ struct ContentView: View {
     @AppStorage("microphoneGainDB")
     private var gainDB = 12.0
 
-    @AppStorage("captureModeV20")
+    @AppStorage("captureModeV21")
     private var captureModeRaw =
         CaptureMode.voiceProcessingIO.rawValue
 
@@ -106,7 +106,8 @@ struct ContentView: View {
     @State private var txWakeMaxGapMS = 0.0
     @State private var txLateWakeCount: UInt64 = 0
     @State private var txCatchUpPackets: UInt64 = 0
-    @State private var txTargetFrames = 1024
+    @State private var txTargetFrames = 1536
+    @State private var audioWorkgroupJoined = false
 
     // ---------------- RX state ----------------
 
@@ -201,8 +202,7 @@ struct ContentView: View {
             .disabled(isStreaming)
 
             Text(
-                "v2.0 uses a deterministic VBAN packet timeline driven by mach_wait_until(). " +
-                "Packets are scheduled on absolute 5.333 ms deadlines; late wakes catch up against the original timeline instead of redefining the clock."
+                "v2.1 rolls back deterministic catch-up pacing. The TX worker joins the RemoteIO/VoiceProcessingIO Audio Workgroup, uses a small fixed 32 ms foreground / 48 ms background queue, and never sends a catch-up burst. Very stale whole packets are discarded instead."
             )
             .font(.caption)
             .foregroundStyle(.secondary)
@@ -655,7 +655,7 @@ struct ContentView: View {
                 )
 
                 LabeledContent(
-                    "TX deadline max late",
+                    "TX wake lifetime max",
                     value:
                         String(
                             format:
@@ -665,13 +665,13 @@ struct ContentView: View {
                 )
 
                 LabeledContent(
-                    "TX late deadlines",
+                    "TX late wakes",
                     value:
                         "\(txLateWakeCount)"
                 )
 
                 LabeledContent(
-                    "TX catch-up packets",
+                    "TX stale packets dropped",
                     value:
                         "\(txCatchUpPackets)"
                 )
@@ -686,6 +686,14 @@ struct ContentView: View {
                             VBANPacket.sampleRate *
                             1000
                         )
+                )
+
+                LabeledContent(
+                    "Audio Workgroup",
+                    value:
+                        audioWorkgroupJoined
+                        ? "Joined"
+                        : "Unavailable"
                 )
 
                 LabeledContent(
@@ -1079,6 +1087,16 @@ struct ContentView: View {
                 DispatchQueue.main.async {
                     voiceProcessingActive =
                         enabled
+                }
+            }
+
+        MisMeeterRuntime.shared
+            .onAudioWorkgroupState = {
+                joined in
+
+                DispatchQueue.main.async {
+                    audioWorkgroupJoined =
+                        joined
                 }
             }
 

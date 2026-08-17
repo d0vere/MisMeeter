@@ -28,6 +28,7 @@ final class MisMeeterRuntime {
     var onAudioDiagnostics: ((Int, Double) -> Void)?
     var onCaptureGap: ((Double) -> Void)?
     var onCaptureLabDiagnostics: ((Double, UInt64, UInt64, UInt64, UInt64, Int, UInt64, Double, UInt64, UInt64, Int) -> Void)?
+    var onAudioWorkgroupState: ((Bool) -> Void)?
     var onUnderruns: ((UInt64) -> Void)?
     var onPacketsSent: ((UInt64) -> Void)?
     var onPrimedChange: ((Bool) -> Void)?
@@ -66,6 +67,10 @@ final class MisMeeterRuntime {
                 txCatchUp,
                 txTarget
             )
+        }
+
+        microphone.onAudioWorkgroupState = { [weak self] joined in
+            self?.onAudioWorkgroupState?(joined)
         }
 
         microphone.onVoiceProcessingState = { [weak self] enabled in

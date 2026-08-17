@@ -63,12 +63,15 @@ final class MicrophoneEngine {
         )
 
     private struct TXControlState {
-        var targetFrames = 1024          // ~21.33 ms
-        var maxWakeGapMS: Double = 0
+        var targetFrames = 1024          // foreground floor: ~21.33 ms
+        var lifetimeMaxWakeGapMS: Double = 0
+        var recentMaxWakeGapMS: Double = 0
         var lateWakeCount: UInt64 = 0
         var catchUpPackets: UInt64 = 0
-        var stableWindows = 0
         var lastWakeNS: UInt64?
+        var adaptationWindowStartNS: UInt64?
+        var stableSinceNS: UInt64?
+        var isBackground = false
     }
 
     private let gainLock =
@@ -652,6 +655,30 @@ final class MicrophoneEngine {
     }
 
 
+    func setBackgroundMode(_ background: Bool) {
+        txControlLock.withLock { state in
+            state.isBackground = background
+
+            let minimumTarget =
+                background
+                ? 2048   // ~42.67 ms
+                : 1024   // ~21.33 ms
+
+            if state.targetFrames < minimumTarget {
+                state.targetFrames = minimumTarget
+                txQueue.setTargetFrames(minimumTarget)
+            }
+
+            state.adaptationWindowStartNS =
+                DispatchTime.now().uptimeNanoseconds
+
+            state.stableSinceNS = nil
+            state.recentMaxWakeGapMS = 0
+        }
+
+        workerSignal.signal()
+    }
+
     private func startWorker() {
         stopWorker()
 
@@ -688,9 +715,15 @@ final class MicrophoneEngine {
                     Double(now - previous) /
                     1_000_000.0
 
-                state.maxWakeGapMS =
+                state.lifetimeMaxWakeGapMS =
                     max(
-                        state.maxWakeGapMS,
+                        state.lifetimeMaxWakeGapMS,
+                        gapMS
+                    )
+
+                state.recentMaxWakeGapMS =
+                    max(
+                        state.recentMaxWakeGapMS,
                         gapMS
                     )
 
@@ -700,6 +733,10 @@ final class MicrophoneEngine {
             }
 
             state.lastWakeNS = now
+
+            if state.adaptationWindowStartNS == nil {
+                state.adaptationWindowStartNS = now
+            }
         }
 
         drainTXQueue()
@@ -770,63 +807,90 @@ final class MicrophoneEngine {
     }
 
     private func adaptTXTargetIfNeeded() {
+        let now =
+            DispatchTime.now().uptimeNanoseconds
+
         let snapshot =
             txQueue.snapshot()
 
-        let control =
-            txControlLock.withLock {
-                $0
+        var requestedTarget: Int?
+
+        txControlLock.withLock { state in
+            guard let windowStart =
+                state.adaptationWindowStartNS
+            else {
+                state.adaptationWindowStartNS = now
+                return
             }
 
-        // If worker wake gaps are large or the queue gets too close to empty,
-        // add one 256-frame packet (~5.33 ms) of safety.
-        var newTarget =
-            snapshot.targetFrames
+            // Evaluate only once every 5 real seconds.
+            guard now - windowStart >=
+                    5_000_000_000
+            else {
+                return
+            }
 
-        let nearEmpty =
-            snapshot.bufferedFrames <
-            snapshot.targetFrames / 2
+            let minimumTarget =
+                state.isBackground
+                ? 2048       // 42.67 ms
+                : 1024       // 21.33 ms
 
-        if control.maxWakeGapMS > 12 ||
-            nearEmpty {
-            newTarget =
-                min(
-                    4096, // ~85.3 ms max
-                    snapshot.targetFrames +
-                    VBANPacket.samplesPerPacket
+            let queueLow =
+                snapshot.bufferedFrames <
+                max(
+                    512,
+                    snapshot.targetFrames / 2
                 )
 
-            txControlLock.withLock {
-                $0.stableWindows = 0
-                $0.maxWakeGapMS = 0
-            }
-        } else {
-            txControlLock.withLock { state in
-                state.stableWindows += 1
-
-                if state.stableWindows >= 100 &&
-                    snapshot.targetFrames > 1024 {
-                    newTarget =
+            // Any meaningful worker stall in the 5 s window increases
+            // safety by 512 frames (~10.67 ms), not just one packet.
+            if state.recentMaxWakeGapMS > 10 ||
+                queueLow {
+                let newTarget =
+                    min(
+                        6144,  // 128 ms maximum
                         max(
-                            1024,
-                            snapshot.targetFrames -
-                            VBANPacket.samplesPerPacket
+                            minimumTarget,
+                            snapshot.targetFrames + 512
                         )
-                    state.stableWindows = 0
+                    )
+
+                requestedTarget = newTarget
+                state.targetFrames = newTarget
+                state.stableSinceNS = nil
+            } else {
+                if state.stableSinceNS == nil {
+                    state.stableSinceNS = now
+                }
+
+                // Do not lower the target until 30 real seconds have been
+                // continuously stable. This fixes v1.8's too-fast decay.
+                if let stableSince =
+                    state.stableSinceNS,
+                   now - stableSince >=
+                        30_000_000_000,
+                   snapshot.targetFrames >
+                        minimumTarget {
+                    let newTarget =
+                        max(
+                            minimumTarget,
+                            snapshot.targetFrames - 256
+                        )
+
+                    requestedTarget = newTarget
+                    state.targetFrames = newTarget
+                    state.stableSinceNS = now
                 }
             }
+
+            state.recentMaxWakeGapMS = 0
+            state.adaptationWindowStartNS = now
         }
 
-        if newTarget !=
-            snapshot.targetFrames {
+        if let requestedTarget {
             txQueue.setTargetFrames(
-                newTarget
+                requestedTarget
             )
-
-            txControlLock.withLock {
-                $0.targetFrames =
-                    newTarget
-            }
         }
     }
 
@@ -852,7 +916,7 @@ final class MicrophoneEngine {
                 state in
 
                 (
-                    state.maxWakeGapMS,
+                    state.lifetimeMaxWakeGapMS,
                     state.lateWakeCount,
                     state.catchUpPackets,
                     state.targetFrames

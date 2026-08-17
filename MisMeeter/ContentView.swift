@@ -201,8 +201,8 @@ struct ContentView: View {
             .disabled(isStreaming)
 
             Text(
-                "v1.8 keeps RemoteIO/VoiceProcessingIO but removes the 2 ms Dispatch timer. " +
-                "A persistent TX worker is signaled by the audio callback and uses an adaptive 21–85 ms elastic queue to absorb occasional lock-screen scheduling delays."
+                "v1.9 keeps the audio-signaled TX worker but fixes the adaptive queue controller. " +
+                "Foreground floor is ~21 ms; true background floor is ~43 ms. Buffer changes are evaluated over real 5-second windows and only decay after 30 stable seconds."
             )
             .font(.caption)
             .foregroundStyle(.secondary)
@@ -655,7 +655,7 @@ struct ContentView: View {
                 )
 
                 LabeledContent(
-                    "TX wake max gap",
+                    "TX wake lifetime max",
                     value:
                         String(
                             format:

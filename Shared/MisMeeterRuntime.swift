@@ -240,14 +240,18 @@ final class MisMeeterRuntime {
 
     func beginLockTransition() {
         transmitter.beginLockTransition()
+        // Still foreground from Core Audio's point of view.
+        microphone.setBackgroundMode(false)
     }
 
     func enterBackgroundTransport() {
         transmitter.enterBackground()
+        microphone.setBackgroundMode(true)
     }
 
     func enterForegroundTransport() {
         transmitter.enterForeground()
+        microphone.setBackgroundMode(false)
     }
 
     func cleanupOrphanedLiveActivitiesIfIdle() async {

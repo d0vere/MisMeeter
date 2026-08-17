@@ -192,3 +192,23 @@ New diagnostics:
 - TX target
 
 Receiver remains unchanged.
+
+
+## v1.9 Background TX Stabilizer
+
+v1.8 diagnostics proved that microphone capture remains healthy while occasional TX worker/network
+gaps remain during lock screen.
+
+v1.9 fixes the adaptive TX queue controller:
+
+- foreground minimum target: 1024 frames ≈ 21.33 ms
+- background minimum target: 2048 frames ≈ 42.67 ms
+- adaptation is evaluated once per 5 real seconds
+- recent wake gap >10 ms: target +512 frames ≈ +10.67 ms
+- maximum target: 6144 frames ≈ 128 ms
+- target can decrease only after 30 continuous seconds of stability
+- decreases one 256-frame packet at a time
+- lifetime max wake gap is no longer reset when adaptation occurs
+
+This corrects v1.8's bug where the target could rise after a late wake and then fall back to 21 ms
+within a fraction of a second because "stable windows" were accidentally counted per worker wake.

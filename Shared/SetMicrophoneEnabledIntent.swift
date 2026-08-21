@@ -16,10 +16,7 @@ struct SetMicrophoneEnabledIntent: SetValueIntent {
 
     func perform() async throws -> some IntentResult {
         let snapshot = SharedAppState.readSnapshot()
-        guard snapshot.isStreaming else {
-            reloadControl()
-            return .result()
-        }
+        guard snapshot.isStreaming else { return .result() }
 
         let desiredMuted = !value
         SharedAppState.issue(.setMicrophoneMuted, value: desiredMuted)
@@ -30,13 +27,6 @@ struct SetMicrophoneEnabledIntent: SetValueIntent {
         await SharedAppState.waitForSnapshot(timeoutMilliseconds: 650) { updated in
             updated.isStreaming && updated.isMuted == desiredMuted
         }
-        reloadControl()
         return .result()
-    }
-
-    private func reloadControl() {
-        if #available(iOS 18.0, *) {
-            ControlCenter.shared.reloadControls(ofKind: SharedAppState.ControlKinds.microphone)
-        }
     }
 }

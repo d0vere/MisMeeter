@@ -138,15 +138,19 @@ final class MisMeeterRuntime {
             publishSharedState(status: isReceiving ? receiveStatusText : "Ready")
             return
         }
+
         let keepAudioSession = isReceiving
-        microphone.stop(deactivateSession: !keepAudioSession)
-        transmitter.stop()
         stateQueue.sync {
             _isStreaming = false
             _isMuted = false
             if !_isReceiving { _startedAt = nil }
         }
+
+        // Publish the intended transport state before lower-level stop callbacks fire.
+        // This prevents transient snapshots such as "Stopped" + isStreaming=true.
         publishSharedState(status: keepAudioSession ? receiveStatusText : "Ready")
+        microphone.stop(deactivateSession: !keepAudioSession)
+        transmitter.stop()
         await updateActivityLifecycle()
     }
 
@@ -164,27 +168,22 @@ final class MisMeeterRuntime {
 
     func stopReceiving() {
         let keepAudioSession = isStreaming
-        receiver.stop(deactivateSession: !keepAudioSession)
         stateQueue.sync {
             _isReceiving = false
             _isReceiveMuted = false
             if !_isStreaming { _startedAt = nil }
         }
-        publishSharedState(status: keepAudioSession ? (isMuted ? "Microphone muted" : "Live") : "Ready")
+
+        let status = keepAudioSession ? (isMuted ? "Microphone muted" : "Live") : "Ready"
+        publishSharedState(status: status)
+        receiver.stop(deactivateSession: !keepAudioSession)
         Task { await updateActivityLifecycle() }
     }
 
     func stopAll() async {
         let hadTX = isStreaming
         let hadRX = isReceiving
-        if hadTX {
-            microphone.stop(deactivateSession: false)
-            transmitter.stop()
-        }
-        if hadRX {
-            receiver.stop(deactivateSession: false)
-        }
-        AudioSessionCoordinator.shared.deactivateIfPossible()
+
         stateQueue.sync {
             _isStreaming = false
             _isMuted = false
@@ -193,6 +192,15 @@ final class MisMeeterRuntime {
             _startedAt = nil
         }
         SharedAppState.writeSnapshot(.idle)
+
+        if hadTX {
+            microphone.stop(deactivateSession: false)
+            transmitter.stop()
+        }
+        if hadRX {
+            receiver.stop(deactivateSession: false)
+        }
+        AudioSessionCoordinator.shared.deactivateIfPossible()
         onStatusChange?("Ready")
         onReceiverStatus?("Ready")
         await endLiveActivity()
@@ -261,19 +269,9 @@ final class MisMeeterRuntime {
         }
     }
 
-    func reconcileExternalControlState() async {
-        let snapshot = SharedAppState.readSnapshot()
-        if (isStreaming && !snapshot.isStreaming) || (isReceiving && !snapshot.isReceiving) {
-            if !snapshot.isStreaming && !snapshot.isReceiving {
-                await stopAll()
-                return
-            }
-            if isStreaming && !snapshot.isStreaming { await stop() }
-            if isReceiving && !snapshot.isReceiving { stopReceiving() }
-        }
-        if isStreaming && snapshot.isMuted != isMuted { setMuted(snapshot.isMuted) }
-        if isReceiving && snapshot.isReceiveMuted != isReceiveMuted { setReceiveMuted(snapshot.isReceiveMuted) }
-    }
+    // Shared snapshots are output-only: they describe what the runtime actually
+    // applied. External controls send exact mailbox commands and never mutate this
+    // snapshot directly, so there is intentionally no snapshot -> runtime reconcile.
 
     func cleanupOrphanedLiveActivitiesIfIdle() async {
         guard !isStreaming && !isReceiving else { return }

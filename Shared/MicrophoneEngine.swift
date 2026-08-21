@@ -145,7 +145,7 @@ final class MicrophoneEngine {
         updateWallClockDiagnostics(nowNS: nowNS)
 
         let renderStatus: OSStatus = floatRenderBuffer.withUnsafeMutableBufferPointer { floatPointer in
-            var audioBuffer = AudioBuffer(
+            let audioBuffer = AudioBuffer(
                 mNumberChannels: 1,
                 mDataByteSize: UInt32(frames * MemoryLayout<Float>.size),
                 mData: floatPointer.baseAddress

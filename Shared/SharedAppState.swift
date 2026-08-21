@@ -4,7 +4,7 @@ import Foundation
 import WidgetKit
 #endif
 
-struct SharedTransportSnapshot: Codable, Hashable {
+struct SharedTransportSnapshot: Codable, Hashable, Sendable {
     var isStreaming = false
     var isMuted = false
     var isReceiving = false
@@ -67,16 +67,27 @@ struct SharedTransportSnapshot: Codable, Hashable {
     }
 }
 
-enum SharedControlAction: Int, Codable {
+enum SharedControlAction: Int, Codable, CaseIterable, Hashable, Sendable {
     /// The command carries the exact desired mute value. This is intentionally
     /// not a blind toggle: Control Center can render from stale state and a
     /// toggle-at-receipt would invert the wrong value.
     case setMicrophoneMuted = 1
     case stopAll = 2
     case setReceiveMuted = 3
+
+    fileprivate var mailboxKey: String {
+        switch self {
+        case .setMicrophoneMuted:
+            return "control.command.v6.microphone"
+        case .setReceiveMuted:
+            return "control.command.v6.receive"
+        case .stopAll:
+            return "control.command.v6.stopAll"
+        }
+    }
 }
 
-struct SharedControlCommand: Codable, Hashable {
+struct SharedControlCommand: Codable, Hashable, Sendable {
     let id: String
     let action: SharedControlAction
     let value: Bool?
@@ -95,11 +106,9 @@ enum SharedAppState {
     enum ControlKinds {
         static let receive = "dev.mismeeter.app.control.receiveMute"
         static let microphone = "dev.mismeeter.app.control.microphoneMute"
-        static let stopAll = "dev.mismeeter.app.control.stopAll"
     }
 
     private static let snapshotKey = "transport.snapshot.v4"
-    private static let commandKey = "control.command.v5"
 
     private static var defaults: UserDefaults {
         UserDefaults(suiteName: appGroup) ?? .standard
@@ -134,9 +143,6 @@ enum SharedAppState {
             if previous.isReceiving != value.isReceiving || previous.isReceiveMuted != value.isReceiveMuted {
                 ControlCenter.shared.reloadControls(ofKind: ControlKinds.receive)
             }
-            if previous.isStreaming != value.isStreaming || previous.isReceiving != value.isReceiving {
-                ControlCenter.shared.reloadControls(ofKind: ControlKinds.stopAll)
-            }
         }
         #endif
     }
@@ -144,7 +150,11 @@ enum SharedAppState {
     static func issue(_ action: SharedControlAction, value: Bool? = nil) {
         let command = SharedControlCommand(action: action, value: value)
         if let data = try? JSONEncoder().encode(command) {
-            defaults.set(data, forKey: commandKey)
+            // One mailbox per action prevents a Mic tap, RX tap and Stop All tap
+            // from overwriting each other before the runtime consumes them. For
+            // repeated taps of the same action, only the newest exact target value
+            // matters, so replacing that mailbox is intentional and idempotent.
+            defaults.set(data, forKey: action.mailboxKey)
         }
         defaults.synchronize()
 
@@ -157,9 +167,19 @@ enum SharedAppState {
         )
     }
 
-    static func pendingCommand() -> SharedControlCommand? {
-        guard let data = defaults.data(forKey: commandKey) else { return nil }
-        return try? JSONDecoder().decode(SharedControlCommand.self, from: data)
+    static func pendingCommand(for action: SharedControlAction) -> SharedControlCommand? {
+        guard let data = defaults.data(forKey: action.mailboxKey),
+              let command = try? JSONDecoder().decode(SharedControlCommand.self, from: data),
+              command.action == action
+        else { return nil }
+        return command
+    }
+
+    static func pendingCommands() -> [SharedControlCommand] {
+        // Stop All is intentionally evaluated first. If it is new, the observer
+        // treats it as dominant and ignores simultaneous mute requests.
+        let order: [SharedControlAction] = [.stopAll, .setMicrophoneMuted, .setReceiveMuted]
+        return order.compactMap { pendingCommand(for: $0) }
     }
 
     /// Polls the runtime-owned shared snapshot for a short acknowledgement window.
@@ -186,15 +206,20 @@ enum SharedAppState {
 }
 
 final class SharedControlObserver {
-    private var lastCommandID: String?
+    private let lock = NSLock()
+    private var lastCommandIDs: [SharedControlAction: String] = [:]
     private var handler: ((SharedControlCommand) -> Void)?
 
     func start(handler: @escaping (SharedControlCommand) -> Void) {
         self.handler = handler
 
-        // Never replay a command left over from a previous process lifetime.
-        // Commands are for controlling an already-running audio runtime.
-        lastCommandID = SharedAppState.pendingCommand()?.id
+        // Never replay commands left over from a previous process lifetime.
+        // Commands only control an already-running audio runtime.
+        lock.lock()
+        lastCommandIDs = Dictionary(
+            uniqueKeysWithValues: SharedAppState.pendingCommands().map { ($0.action, $0.id) }
+        )
+        lock.unlock()
 
         CFNotificationCenterAddObserver(
             CFNotificationCenterGetDarwinNotifyCenter(),
@@ -202,7 +227,7 @@ final class SharedControlObserver {
             { _, observer, _, _, _ in
                 guard let observer else { return }
                 let object = Unmanaged<SharedControlObserver>.fromOpaque(observer).takeUnretainedValue()
-                object.consumePendingCommand()
+                object.consumePendingCommands()
             },
             SharedAppState.controlNotification as CFString,
             nil,
@@ -217,12 +242,37 @@ final class SharedControlObserver {
             nil,
             nil
         )
+        lock.lock()
+        handler = nil
+        lock.unlock()
     }
 
-    private func consumePendingCommand() {
-        guard let pending = SharedAppState.pendingCommand(), pending.id != lastCommandID else { return }
-        lastCommandID = pending.id
-        handler?(pending)
+    private func consumePendingCommands() {
+        let pending = SharedAppState.pendingCommands()
+        var fresh: [SharedControlCommand] = []
+
+        lock.lock()
+        for command in pending where lastCommandIDs[command.action] != command.id {
+            lastCommandIDs[command.action] = command.id
+            fresh.append(command)
+        }
+        let currentHandler = handler
+        lock.unlock()
+
+        guard let currentHandler, !fresh.isEmpty else { return }
+
+        // Stop All dominates a burst. The mute mailboxes are still marked consumed,
+        // preventing a late callback from trying to mutate a transport that is gone.
+        if let stop = fresh.first(where: { $0.action == .stopAll }) {
+            currentHandler(stop)
+            return
+        }
+
+        for action in [SharedControlAction.setMicrophoneMuted, .setReceiveMuted] {
+            if let command = fresh.first(where: { $0.action == action }) {
+                currentHandler(command)
+            }
+        }
     }
 
     deinit { stop() }

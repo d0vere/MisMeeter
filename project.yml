@@ -22,9 +22,32 @@ targets:
   MisMeeter:
     type: application
     platform: iOS
+    # Intentionally explicit. Do not replace this with `path: Shared` or `path: MisMeeter`.
+    # XcodeGen recursively includes every file in a directory; an old tracked source
+    # copied over from a previous release could otherwise silently re-enter the build.
     sources:
-      - path: Shared
-      - path: MisMeeter
+      - path: MisMeeter/MisMeeterApp.swift
+      - path: MisMeeter/ContentView.swift
+      - path: MisMeeter/Assets.xcassets
+      - path: Shared/AudioSessionCoordinator.swift
+      - path: Shared/CaptureMode.swift
+      - path: Shared/EndLiveActivityIntent.swift
+      - path: Shared/MicActivityAttributes.swift
+      - path: Shared/MicrophoneEngine.swift
+      - path: Shared/MisMeeterRuntime.swift
+      - path: Shared/PlaybackRingBuffer.swift
+      - path: Shared/SetMicrophoneEnabledIntent.swift
+      - path: Shared/SetReceiveEnabledIntent.swift
+      - path: Shared/SharedAppState.swift
+      - path: Shared/ToggleMuteIntent.swift
+      - path: Shared/ToggleReceiveMuteIntent.swift
+      - path: Shared/TransportState.swift
+      - path: Shared/VBANPacket.swift
+      - path: Shared/VBANPreset.swift
+      - path: Shared/VBANReceivePreset.swift
+      - path: Shared/VBANReceiver.swift
+      - path: Shared/VBANTransmissionMode.swift
+      - path: Shared/VBANTransmitter.swift
     info:
       path: MisMeeter/Generated-Info.plist
       properties:
@@ -34,8 +57,8 @@ targets:
         CFBundleInfoDictionaryVersion: "6.0"
         CFBundleName: $(PRODUCT_NAME)
         CFBundlePackageType: APPL
-        CFBundleShortVersionString: "3.3.3"
-        CFBundleVersion: "45"
+        CFBundleShortVersionString: "3.3.4"
+        CFBundleVersion: "46"
         LSRequiresIPhoneOS: true
         NSSupportsLiveActivities: true
         NSMicrophoneUsageDescription: "MisMeeter uses the iPhone microphone to transmit live audio to your VBAN destination."
@@ -64,8 +87,12 @@ targets:
   MisMeeterWidget:
     type: app-extension
     platform: iOS
+    # Explicit source membership for the extension for the same stale-file reason.
     sources:
-      - path: MisMeeterWidget
+      - path: MisMeeterWidget/MisMeeterLiveActivity.swift
+      - path: MisMeeterWidget/MisMeeterStatusWidget.swift
+      - path: MisMeeterWidget/MisMeeterSystemControls.swift
+      - path: MisMeeterWidget/MisMeeterWidgetBundle.swift
       - path: Shared/MicActivityAttributes.swift
       - path: Shared/SharedAppState.swift
       - path: Shared/ToggleMuteIntent.swift
@@ -82,8 +109,8 @@ targets:
         CFBundleInfoDictionaryVersion: "6.0"
         CFBundleName: $(PRODUCT_NAME)
         CFBundlePackageType: XPC!
-        CFBundleShortVersionString: "3.3.3"
-        CFBundleVersion: "45"
+        CFBundleShortVersionString: "3.3.4"
+        CFBundleVersion: "46"
         NSExtension:
           NSExtensionPointIdentifier: com.apple.widgetkit-extension
     settings:

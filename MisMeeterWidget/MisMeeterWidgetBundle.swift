@@ -8,6 +8,5 @@ struct MisMeeterWidgetBundle: WidgetBundle {
         MisMeeterLiveActivity()
         MisMeeterReceiveMuteControl()
         MisMeeterMicrophoneMuteControl()
-        MisMeeterStopAllControl()
     }
 }

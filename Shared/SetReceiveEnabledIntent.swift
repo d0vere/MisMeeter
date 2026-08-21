@@ -16,10 +16,7 @@ struct SetReceiveEnabledIntent: SetValueIntent {
 
     func perform() async throws -> some IntentResult {
         let snapshot = SharedAppState.readSnapshot()
-        guard snapshot.isReceiving else {
-            reloadControl()
-            return .result()
-        }
+        guard snapshot.isReceiving else { return .result() }
 
         let desiredMuted = !value
         SharedAppState.issue(.setReceiveMuted, value: desiredMuted)
@@ -27,13 +24,6 @@ struct SetReceiveEnabledIntent: SetValueIntent {
         await SharedAppState.waitForSnapshot(timeoutMilliseconds: 650) { updated in
             updated.isReceiving && updated.isReceiveMuted == desiredMuted
         }
-        reloadControl()
         return .result()
-    }
-
-    private func reloadControl() {
-        if #available(iOS 18.0, *) {
-            ControlCenter.shared.reloadControls(ofKind: SharedAppState.ControlKinds.receive)
-        }
     }
 }

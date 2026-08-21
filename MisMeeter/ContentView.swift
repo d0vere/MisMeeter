@@ -89,7 +89,6 @@ struct ContentView: View {
             MisMeeterRuntime.shared.gainDB = Float(gainDB)
             reconcileRuntimeState()
             Task {
-                await MisMeeterRuntime.shared.reconcileExternalControlState()
                 await MisMeeterRuntime.shared.cleanupOrphanedLiveActivitiesIfIdle()
                 await MainActor.run { reconcileRuntimeState() }
             }
@@ -97,10 +96,7 @@ struct ContentView: View {
         }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active {
-                Task {
-                    await MisMeeterRuntime.shared.reconcileExternalControlState()
-                    await MainActor.run { reconcileRuntimeState() }
-                }
+                reconcileRuntimeState()
             }
             updateScenePhase(phase)
         }
@@ -664,7 +660,6 @@ struct ContentView: View {
 
     private func reconcileRuntimeState() {
         let runtime = MisMeeterRuntime.shared
-        let shared = SharedAppState.readSnapshot()
 
         isStreaming = runtime.isStreaming
         isMuted = runtime.isStreaming ? runtime.isMuted : false
@@ -684,12 +679,6 @@ struct ContentView: View {
             rxStatus = "Ready"
         }
 
-        // If an App Intent stopped the stream while the UI was suspended, ensure the
-        // foreground view never resurrects stale controls from its previous @State.
-        if !shared.isStreaming && !runtime.isStreaming {
-            isStreaming = false
-            isMuted = false
-        }
     }
 
     private func wireRuntimeCallbacks() {

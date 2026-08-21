@@ -5,7 +5,7 @@ import WidgetKit
 /// Snapshot-backed state used by the native iOS Controls.
 /// `isOn` is the value rendered by the toggle, while `isAvailable` prevents
 /// controls from pretending they can change an inactive transport.
-struct TransportControlValue {
+struct TransportControlValue: Sendable {
     let isOn: Bool
     let isAvailable: Bool
 }
@@ -91,36 +91,6 @@ struct MisMeeterReceiveMuteControl: ControlWidget {
                 isOn: snapshot.isReceiving && !snapshot.isReceiveMuted,
                 isAvailable: snapshot.isReceiving
             )
-        }
-    }
-}
-
-@available(iOSApplicationExtension 18.0, *)
-struct MisMeeterStopAllControl: ControlWidget {
-    var body: some ControlWidgetConfiguration {
-        StaticControlConfiguration(
-            kind: SharedAppState.ControlKinds.stopAll,
-            provider: Provider()
-        ) { isActive in
-            ControlWidgetButton(action: EndLiveActivityIntent()) {
-                Label(
-                    isActive ? "Stop All" : "MisMeeter Idle",
-                    systemImage: isActive ? "stop.fill" : "stop.circle"
-                )
-            }
-            .disabled(!isActive)
-            .tint(.red)
-        }
-        .displayName("Stop MisMeeter")
-        .description("Stop all active MisMeeter transmission and reception.")
-    }
-
-    struct Provider: ControlValueProvider {
-        var previewValue: Bool { true }
-
-        func currentValue() async throws -> Bool {
-            let snapshot = SharedAppState.readSnapshot()
-            return snapshot.isStreaming || snapshot.isReceiving
         }
     }
 }

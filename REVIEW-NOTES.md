@@ -1,14 +1,14 @@
-# MisMeeter 3.3.3 — Dynamic Island + authoritative native Controls
+# MisMeeter 3.3.4 — Build hygiene + native Control hardening
 
-- Dynamic Island compact presentation now groups both RX and TX icons on the leading/left side of the camera area.
-- Inactive RX/TX indicators remain visible but dimmed, avoiding layout jumps.
-- Compact trailing region is intentionally empty; no microphone icon can be clipped on the right edge.
-- Reworked Mic and RX Controls to expose ON / MUTED / IDLE and disable interaction when the corresponding transport is inactive.
-- Control intents no longer write optimistic transport state from the extension.
-- Exact-value commands are sent to the running runtime, followed by a short acknowledgement readback from the App Group snapshot.
-- Live Activity mute intents now use the same runtime-authoritative command path.
-- Stop All waits for runtime confirmation before dismissing the Live Activity.
-- App-side state changes continue to trigger targeted Control Center reloads.
-- No MediaPlayer / Now Playing / silent-player implementation or audio resource remains.
-- Automatic adaptive RX jitter remains unchanged.
-- Version 3.3.3, build 45.
+- Fixed the root cause of the 3.3.3 CI regression: XcodeGen no longer recursively includes whole source directories.
+- App and Widget source membership is now explicit and reproducible.
+- CI regenerates the Xcode project from scratch and rejects all known legacy Now Playing / old TX sources.
+- Removed the third Stop All system Control; Control Center / Lock Screen expose only Mic and RX as requested.
+- Mic/RX Controls remain exact-value, stateful, `.alwaysAllowed`, runtime-authoritative toggles.
+- Replaced the single control-command slot with independent Mic / RX / Stop All mailboxes.
+- Removed snapshot-to-runtime reconciliation; the shared snapshot is output-only truth from the audio runtime.
+- Hardened stop-state ordering to avoid transient stale transport snapshots.
+- Fixed the current `MicrophoneEngine` immutable-buffer compiler warning.
+- Dynamic Island remains ActivityKit-only with RX + TX together in compact leading and no compact trailing content.
+- Automatic adaptive RX jitter remains enabled.
+- Version 3.3.4, build 46.

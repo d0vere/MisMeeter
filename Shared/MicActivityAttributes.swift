@@ -2,7 +2,7 @@ import ActivityKit
 import Foundation
 
 struct MicActivityAttributes: ActivityAttributes {
-    public struct ContentState: Codable, Hashable {
+    public struct ContentState: Codable, Hashable, Sendable {
         var isMuted: Bool
         var isStreaming: Bool
         var isReceiving: Bool

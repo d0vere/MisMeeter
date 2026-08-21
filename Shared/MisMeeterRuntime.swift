@@ -17,6 +17,7 @@ final class MisMeeterRuntime {
     private var _startedAt: Date?
     private var _preset = VBANPreset(name: "Preset 1", host: "", port: 6980, streamName: "MisMeeter")
     private var _receivePreset = VBANReceivePreset(name: "Receive", port: 6980, streamName: "MisMeeterRX")
+    private var _activityPresentationRevision: UInt64 = 0
 
     var onStatusChange: ((String) -> Void)?
     var onMeter: ((Float) -> Void)?
@@ -122,8 +123,12 @@ final class MisMeeterRuntime {
         }
         if isReceiving { AudioSessionCoordinator.shared.forceSpeaker() }
         publishSharedState(status: isReceiving ? "Duplex live" : "Live")
-        configureNowPlayingControls()
+
+        // Establish/update the ActivityKit surface first. MPNowPlayingSession promotion is
+        // asynchronous and can otherwise temporarily win Dynamic Island arbitration.
+        // Once Now Playing becomes active it triggers a second Live Activity reassertion.
         await ensureLiveActivity()
+        configureNowPlayingControls()
     }
 
     func stop() async {
@@ -244,28 +249,58 @@ final class MisMeeterRuntime {
             isTXActive: { [weak self] in self?.isStreaming ?? false },
             isRXActive: { [weak self] in self?.isReceiving ?? false },
             isMicrophoneMuted: { [weak self] in self?.isMuted ?? true },
-            setMicrophoneMuted: { [weak self] muted in self?.setMuted(muted) },
+            toggleMicrophoneMute: { [weak self] in self?.toggleMuted() ?? false },
             toggleReceiveMute: { [weak self] in _ = self?.toggleReceiveMuted() },
             stopAll: { [weak self] in
                 guard let self else { return }
                 Task { await self.stopAll() }
+            },
+            onSessionPromoted: { [weak self] in
+                self?.reassertLiveActivityAfterNowPlayingPromotion()
             }
         )
+    }
+
+    /// Re-publishes the Live Activity after iOS promotes the Now Playing session.
+    /// There is no public API to suppress Now Playing only in the Dynamic Island while
+    /// keeping it on the Lock Screen, so this deliberately reasserts our ActivityKit
+    /// presentation after the media-session race has settled. The system still owns
+    /// final Dynamic Island arbitration.
+    private func reassertLiveActivityAfterNowPlayingPromotion() {
+        Task { [weak self] in
+            guard let self, self.isStreaming || self.isReceiving else { return }
+            await self.ensureLiveActivity()
+
+            // A second distinct ActivityKit update catches the short window in which
+            // SpringBoard may finish promoting Now Playing after the first update.
+            try? await Task.sleep(nanoseconds: 450_000_000)
+            guard self.isStreaming || self.isReceiving else { return }
+            await self.syncLiveActivity()
+        }
     }
 
     func beginLockTransition() {
         transmitter.beginLockTransition()
         microphone.setBackgroundMode(false)
+        if isStreaming || isReceiving {
+            Task { await syncLiveActivity() }
+        }
     }
 
     func enterBackgroundTransport() {
         transmitter.enterBackground()
         microphone.setBackgroundMode(true)
+        if isStreaming || isReceiving {
+            Task { await syncLiveActivity() }
+        }
     }
 
     func enterForegroundTransport() {
         transmitter.enterForeground()
         microphone.setBackgroundMode(false)
+        if isStreaming || isReceiving {
+            Task { await syncLiveActivity() }
+        }
     }
 
     func reconcileExternalControlState() async {
@@ -349,7 +384,14 @@ final class MisMeeterRuntime {
     private func activityState(status: String) -> MicActivityAttributes.ContentState {
         var snapshot = sharedSnapshot(status: status)
         snapshot.status = status
-        return MicActivityAttributes.ContentState(snapshot: snapshot)
+        let revision = stateQueue.sync {
+            _activityPresentationRevision &+= 1
+            return _activityPresentationRevision
+        }
+        return MicActivityAttributes.ContentState(
+            snapshot: snapshot,
+            presentationRevision: revision
+        )
     }
 
     private func sharedSnapshot(status: String) -> SharedTransportSnapshot {

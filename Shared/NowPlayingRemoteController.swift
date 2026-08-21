@@ -32,9 +32,10 @@ final class NowPlayingRemoteController {
     private var isTXActive: (() -> Bool)?
     private var isRXActive: (() -> Bool)?
     private var isMicrophoneMuted: (() -> Bool)?
-    private var setMicrophoneMuted: ((Bool) -> Void)?
+    private var toggleMicrophoneMute: (() -> Bool)?
     private var toggleReceiveMute: (() -> Void)?
     private var stopAll: (() -> Void)?
+    private var onSessionPromoted: (() -> Void)?
 
     private init() {}
 
@@ -50,16 +51,18 @@ final class NowPlayingRemoteController {
         isTXActive: @escaping () -> Bool,
         isRXActive: @escaping () -> Bool,
         isMicrophoneMuted: @escaping () -> Bool,
-        setMicrophoneMuted: @escaping (Bool) -> Void,
+        toggleMicrophoneMute: @escaping () -> Bool,
         toggleReceiveMute: @escaping () -> Void,
-        stopAll: @escaping () -> Void
+        stopAll: @escaping () -> Void,
+        onSessionPromoted: @escaping () -> Void
     ) {
         self.isTXActive = isTXActive
         self.isRXActive = isRXActive
         self.isMicrophoneMuted = isMicrophoneMuted
-        self.setMicrophoneMuted = setMicrophoneMuted
+        self.toggleMicrophoneMute = toggleMicrophoneMute
         self.toggleReceiveMute = toggleReceiveMute
         self.stopAll = stopAll
+        self.onSessionPromoted = onSessionPromoted
 
         performOnMain { [weak self] in
             guard let self else { return }
@@ -336,44 +339,20 @@ final class NowPlayingRemoteController {
         center.previousTrackCommand.isEnabled = true
         center.nextTrackCommand.isEnabled = true
 
+        // The physical keep-alive player intentionally stays in the playing state.
+        // iOS can therefore show either Play or Pause depending on its own cached media state.
+        // Treat both commands as the same atomic microphone toggle so the Lock Screen can
+        // never get out of sync with a mute performed from inside the app or another surface.
         commandTokens.append((center.playCommand, center.playCommand.addTarget { [weak self] _ in
-            guard let self,
-                  self.isTXActive?() == true,
-                  self.isRemoteCommandAllowed() else {
-                return .commandFailed
-            }
-
-            // Play only unmutes an already-running TX. It never starts the runtime.
-            self.setMicrophoneMuted?(false)
-            self.schedulePostCommandRefresh()
-            return .success
+            self?.handleRemoteMicrophoneToggle() ?? .commandFailed
         }))
 
         commandTokens.append((center.pauseCommand, center.pauseCommand.addTarget { [weak self] _ in
-            guard let self,
-                  self.isTXActive?() == true,
-                  self.isRemoteCommandAllowed() else {
-                return .commandFailed
-            }
-
-            // Pause is a logical microphone mute. The silent AVPlayer intentionally
-            // keeps rendering so iOS retains an active Now Playing session.
-            self.setMicrophoneMuted?(true)
-            self.schedulePostCommandRefresh()
-            return .success
+            self?.handleRemoteMicrophoneToggle() ?? .commandFailed
         }))
 
         commandTokens.append((center.togglePlayPauseCommand, center.togglePlayPauseCommand.addTarget { [weak self] _ in
-            guard let self,
-                  self.isTXActive?() == true,
-                  self.isRemoteCommandAllowed() else {
-                return .commandFailed
-            }
-
-            let nextMutedState = !(self.isMicrophoneMuted?() ?? true)
-            self.setMicrophoneMuted?(nextMutedState)
-            self.schedulePostCommandRefresh()
-            return .success
+            self?.handleRemoteMicrophoneToggle() ?? .commandFailed
         }))
 
         commandTokens.append((center.previousTrackCommand, center.previousTrackCommand.addTarget { [weak self] _ in
@@ -412,6 +391,19 @@ final class NowPlayingRemoteController {
         center.stopCommand.isEnabled = false
 
         isInstalled = true
+    }
+
+
+    private func handleRemoteMicrophoneToggle() -> MPRemoteCommandHandlerStatus {
+        guard isTXActive?() == true,
+              isRemoteCommandAllowed(),
+              let toggleMicrophoneMute else {
+            return .commandFailed
+        }
+
+        _ = toggleMicrophoneMute()
+        schedulePostCommandRefresh()
+        return .success
     }
 
     private func schedulePostCommandRefresh() {
@@ -511,6 +503,7 @@ final class NowPlayingRemoteController {
                     self.promotionRetryCount = 0
                     self.promotionRetryWorkItem?.cancel()
                     self.promotionRetryWorkItem = nil
+                    self.onSessionPromoted?()
                 } else {
                     self.schedulePromotionRetry()
                 }

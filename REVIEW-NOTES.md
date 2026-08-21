@@ -1,3 +1,15 @@
+# MisMeeter 3.3.1 — Dynamic Island + Lock Screen state fix
+
+- Play, Pause and Toggle Play/Pause all atomically toggle the real microphone mute state.
+- Live Activity is created/refreshed before Now Playing activation and reasserted after media-session promotion.
+- Added unique ActivityKit presentation revisions and scene-transition refreshes to reduce initial Dynamic Island double-presentation.
+- Compact trailing microphone has a fixed safe frame and extra trailing inset to prevent clipping.
+- Public iOS APIs do not provide a supported way to show Now Playing on the Lock Screen while explicitly hiding only its Dynamic Island representation; final arbitration remains system-controlled.
+- Automatic RX jitter from 3.3.0 is unchanged.
+- Version 3.3.1, build 43.
+
+---
+
 # MisMeeter 3.3.0 — Lock Screen + Auto Jitter
 
 - Migrated Now Playing to `MPNowPlayingSession` with a continuously-running silent `AVQueuePlayer`.

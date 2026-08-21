@@ -91,19 +91,35 @@ struct MisMeeterLiveActivity: Widget {
                 }
             } compactLeading: {
                 if context.state.isReceiving {
-                    receiveIndicator(context.state)
-                        .accessibilityLabel(context.state.isReceiveMuted ? "Receive audio muted" : "Receive audio active")
+                    compactIndicator(
+                        systemImage: context.state.isReceiveMuted ? "speaker.slash.fill" : "speaker.wave.2.fill",
+                        muted: context.state.isReceiveMuted
+                    )
+                    .padding(.leading, 1)
+                    .accessibilityLabel(context.state.isReceiveMuted ? "Receive audio muted" : "Receive audio active")
                 }
             } compactTrailing: {
                 if context.state.isStreaming {
-                    microphoneIndicator(context.state)
-                        .accessibilityLabel(context.state.isMuted ? "Microphone muted" : "Microphone active")
+                    compactIndicator(
+                        systemImage: context.state.isMuted ? "mic.slash.fill" : "mic.fill",
+                        muted: context.state.isMuted
+                    )
+                    // Reserve a little trailing breathing room: wide slash variants can
+                    // otherwise touch SpringBoard's compact-region clipping boundary.
+                    .padding(.trailing, 3)
+                    .accessibilityLabel(context.state.isMuted ? "Microphone muted" : "Microphone active")
                 }
             } minimal: {
                 if context.state.isStreaming {
-                    microphoneIndicator(context.state)
+                    compactIndicator(
+                        systemImage: context.state.isMuted ? "mic.slash.fill" : "mic.fill",
+                        muted: context.state.isMuted
+                    )
                 } else {
-                    receiveIndicator(context.state)
+                    compactIndicator(
+                        systemImage: context.state.isReceiveMuted ? "speaker.slash.fill" : "speaker.wave.2.fill",
+                        muted: context.state.isReceiveMuted
+                    )
                 }
             }
             .keylineTint(isAnyMuted(context.state) ? .red : .green)
@@ -121,7 +137,22 @@ struct MisMeeterLiveActivity: Widget {
     private func microphoneIndicator(_ state: MicActivityAttributes.ContentState) -> some View {
         Image(systemName: state.isMuted ? "mic.slash.fill" : "mic.fill")
             .font(.caption.weight(.bold))
+            .frame(width: 18, height: 18, alignment: .center)
             .foregroundStyle(state.isMuted ? .red : .green)
+    }
+
+    @ViewBuilder
+    private func compactIndicator(systemImage: String, muted: Bool) -> some View {
+        ZStack {
+            Color.clear
+                .frame(width: 20, height: 20)
+            Image(systemName: systemImage)
+                .font(.caption2.weight(.bold))
+                .symbolRenderingMode(.monochrome)
+                .foregroundStyle(muted ? .red : .green)
+                .frame(width: 16, height: 16, alignment: .center)
+        }
+        .frame(width: 20, height: 20)
     }
 
     private func transportTint(active: Bool, muted: Bool) -> Color {

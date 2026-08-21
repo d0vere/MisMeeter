@@ -13,8 +13,9 @@ struct MicActivityAttributes: ActivityAttributes {
         var receivePresetLabel: String
         var startedAt: Date?
         var statusLabel: String
+        var presentationRevision: UInt64?
 
-        init(snapshot: SharedTransportSnapshot) {
+        init(snapshot: SharedTransportSnapshot, presentationRevision: UInt64 = 0) {
             isMuted = snapshot.isMuted
             isStreaming = snapshot.isStreaming
             isReceiving = snapshot.isReceiving
@@ -25,6 +26,7 @@ struct MicActivityAttributes: ActivityAttributes {
             receivePresetLabel = snapshot.receivePresetName
             startedAt = snapshot.startedAt
             statusLabel = snapshot.status
+            self.presentationRevision = presentationRevision
         }
     }
 

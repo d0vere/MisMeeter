@@ -37,7 +37,7 @@ grep -Fq 'ControlValueProvider' MisMeeterWidget/MisMeeterSystemControls.swift
 grep -Fq 'provider: Provider()' MisMeeterWidget/MisMeeterSystemControls.swift
 grep -Fq 'func currentValue() async throws -> MisMeeterControlValue' MisMeeterWidget/MisMeeterSystemControls.swift
 grep -Fq 'SharedAppState.readSnapshot()' MisMeeterWidget/MisMeeterSystemControls.swift
-grep -Fq '.disabled(!value.isActive)' MisMeeterWidget/MisMeeterSystemControls.swift
+! grep -Fq '.disabled(' MisMeeterWidget/MisMeeterSystemControls.swift
 grep -Fq '.tint(.red)' MisMeeterWidget/MisMeeterSystemControls.swift
 grep -Fq 'TX IDLE' MisMeeterWidget/MisMeeterSystemControls.swift
 grep -Fq 'RX IDLE' MisMeeterWidget/MisMeeterSystemControls.swift
@@ -49,6 +49,7 @@ grep -Fq 'SetValueIntent, LiveActivityIntent' Shared/SetReceiveMuteControlIntent
 ! grep -Fq 'ControlCenter' Shared/SharedAppState.swift
 grep -Fq 'ControlCenter.shared.reloadControls(ofKind: Kinds.receive)' Shared/SharedControlState.swift
 grep -Fq 'ControlCenter.shared.reloadControls(ofKind: Kinds.microphone)' Shared/SharedControlState.swift
+grep -Fq 'ControlCenter.shared.reloadAllControls()' Shared/SharedControlState.swift
 ! grep -Fq 'struct SharedControlState:' Shared/SharedControlState.swift
 ! grep -Fq 'control-state-' Shared/SharedControlState.swift
 grep -Fq 'publishControlState(reloadControls: true)' Shared/MisMeeterRuntime.swift
@@ -71,7 +72,7 @@ fi
 grep -Fq 'group.dev.mismeeter.app' MisMeeter/MisMeeter.entitlements
 grep -Fq 'group.dev.mismeeter.app' MisMeeterWidget/MisMeeterWidget.entitlements
 grep -Fq 'static let appGroup = "group.dev.mismeeter.app"' Shared/SharedAppState.swift
-grep -Fq 'CFBundleShortVersionString: "4.0.3"' project.yml
-grep -Fq 'CFBundleVersion: "103"' project.yml
+grep -Fq 'CFBundleShortVersionString: "4.0.4"' project.yml
+grep -Fq 'CFBundleVersion: "104"' project.yml
 
 echo 'MisMeeter package validation passed.'

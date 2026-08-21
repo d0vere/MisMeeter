@@ -26,5 +26,12 @@ enum SharedControlStateStore {
         ControlCenter.shared.reloadControls(ofKind: Kinds.receive)
         ControlCenter.shared.reloadControls(ofKind: Kinds.microphone)
     }
+
+    /// Used at process launch/update to force WidgetKit to discard any template
+    /// cached from a previous app build (notably the 4.0.3 disabled templates).
+    static func reloadAllConfiguredControls() {
+        guard #available(iOS 18.0, *) else { return }
+        ControlCenter.shared.reloadAllControls()
+    }
     #endif
 }

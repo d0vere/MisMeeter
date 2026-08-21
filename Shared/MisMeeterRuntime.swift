@@ -419,10 +419,12 @@ final class MisMeeterRuntime {
     // there is intentionally no snapshot -> runtime reconciliation loop.
 
     func refreshSystemControls() {
-        // Re-publish the canonical transport snapshot first, then invalidate the
-        // exact Control kinds. Their providers re-read this snapshot on refresh.
+        // Re-publish first, then force all configured templates to rebuild. This is
+        // intentionally stronger than the normal per-kind invalidation because this
+        // path runs on launch/foreground recovery and must evict templates cached
+        // from an older app build.
         publishSharedState(status: currentStatusText)
-        publishControlState(reloadControls: true)
+        SharedControlStateStore.reloadAllConfiguredControls()
     }
 
     /// Best-effort lifecycle cleanup for normal process termination. iOS does not

@@ -1,33 +1,28 @@
-# MisMeeter 4.0.3 review notes
+# MisMeeter 4.0.4 review notes
 
-4.0.3 corrects the Control Center state model used by 4.0.2 and hardens synchronization between the audio runtime, App Group snapshot, system controls and in-app SwiftUI state.
+4.0.4 fixes the Control Center regression introduced in 4.0.3 while retaining the synchronization hardening added after 4.0.2.
 
-## Root cause fixed
+## Confirmed 4.0.3 regression
 
-4.0.2 created `StaticControlConfiguration` without a `ControlValueProvider` and captured `SharedAppState.readSnapshot()` while constructing the configuration body. This bypassed WidgetKit's documented current-value lifecycle for stateful controls and could leave Control Center rendering stale TX/RX state after app-originated transport changes.
+4.0.3 applied `.disabled(!value.isActive)` to both `ControlWidgetToggle` templates. If WidgetKit rendered from an IDLE or temporarily stale provider snapshot, SpringBoard disabled the Control itself. In that state the tap never reached `SetValueIntent.perform()`, so there was no optimistic toggle feedback and no runtime mutation.
 
-## 4.0.3 Control Center model
+## 4.0.4 Control Center model
 
-- RX/TX controls now use `ControlValueProvider`.
-- `currentValue()` reads the authoritative atomic App Group snapshot.
-- Provider values contain both `isActive` and `isMuted`, so IDLE/ACTIVE and mute feedback come from the same snapshot.
-- Controls are disabled while their transport is inactive.
-- App-originated start/stop/mute changes reload the exact configured Control kinds.
-- Control interactions still rely on WidgetKit's automatic refresh after `SetValueIntent.perform()`; no competing manual reload is performed inside the intent.
-- A stale in-flight tap against an already-stopped transport now republishes the authoritative inactive snapshot before the intent returns.
+- RX/TX Controls remain backed by `ControlValueProvider` and read the authoritative atomic App Group snapshot.
+- Transport activity (`isActive`) affects labels/status only; it never disables tap delivery.
+- Runtime guards remain authoritative and reject mute changes when the corresponding transport is inactive.
+- App-originated start/stop/mute changes persist state before invalidating the exact configured Control kinds.
+- Control interactions rely on WidgetKit's automatic refresh after `SetValueIntent.perform()` returns.
+- Launch/foreground recovery calls `ControlCenter.shared.reloadAllControls()` to evict templates cached from 4.0.3.
+- Existing v4 Control kind identifiers remain unchanged to preserve Control Center placements.
 
-## Additional synchronization hardening
+## Synchronization hardening retained
 
-- Runtime snapshots are captured atomically from one `stateQueue.sync`, preventing mixed TX/RX fields from separate reads.
-- Snapshot capture + App Group publication are serialized so an older callback cannot overwrite newer transport fields.
-- Persisted snapshots normalize impossible states (`muted == true` while the corresponding transport is stopped).
-- Runtime publishes a transport snapshot callback so the SwiftUI UI immediately reconciles changes initiated from Control Center.
-- Existing v4 Control `kind` identifiers remain unchanged to preserve user placements.
-
-## Preserved behavior
-
-VBAN encoding/decoding, adaptive RX jitter, audio-session policy, background audio, Live Activity geometry and the existing mute semantics are otherwise unchanged.
+- Runtime snapshots are captured atomically from one `stateQueue.sync`.
+- Snapshot capture + App Group publication are serialized, preventing older callbacks from overwriting newer transport fields.
+- Persisted snapshots normalize impossible mute states while a transport is stopped.
+- SwiftUI receives authoritative runtime snapshot callbacks for changes initiated from system Controls.
 
 ## Validation scope
 
-`Scripts/validate-package.sh` performs Swift parser checks plus architecture/source-membership assertions. The GitHub workflow generates a fresh Xcode project with XcodeGen and is configured to build an unsigned Release app with Xcode 16.4 / iOS 18.5 while rejecting Swift compiler warnings.
+`Scripts/validate-package.sh` parses every Swift source, validates YAML/JSON/plist files, verifies target source membership, and asserts the Control Center architecture including the absence of `.disabled(...)` in `MisMeeterSystemControls.swift`. The included GitHub workflow is configured for Xcode 16.4 / iOS 18.5 Release compilation with Swift warnings treated as errors.

@@ -4,10 +4,10 @@ import WidgetKit
 
 /// The value rendered by a system Control.
 ///
-/// `isOn` alone is not sufficient for MisMeeter because a mute toggle must also
-/// know whether the corresponding transport is actually running. Keeping both bits
-/// in the provider value lets WidgetKit render and disable the control from one
-/// coherent App Group snapshot.
+/// `isOn` alone is not sufficient for MisMeeter because the label also needs to
+/// know whether the corresponding transport is actually running. The transport bit
+/// is presentation-only: it must never disable the Control, because a stale provider
+/// snapshot must not suppress delivery of the SetValueIntent.
 struct MisMeeterControlValue: Hashable, Sendable {
     let isActive: Bool
     let isMuted: Bool
@@ -20,11 +20,10 @@ struct MisMeeterControlValue: Hashable, Sendable {
 
 /// iOS 18 system Controls for MisMeeter.
 ///
-/// Apple expects a stateful ControlWidgetToggle to expose its current value through
-/// a `ControlValueProvider`. WidgetKit asks `currentValue()` whenever the control is
-/// rendered and again after its SetValueIntent finishes. The provider reads the same
-/// atomic App Group snapshot used by the app, widgets and Live Activity, so there is
-/// still a single source of truth and no Control-specific cache.
+/// MisMeeter uses a `ControlValueProvider` so WidgetKit can fetch the latest
+/// cross-process App Group snapshot when rendering the control. The provider reads
+/// the same atomic state used by the app, widgets and Live Activity, so there is no
+/// second Control-specific cache.
 @available(iOSApplicationExtension 18.0, *)
 struct MisMeeterMicrophoneMuteControl: ControlWidget {
     struct Provider: ControlValueProvider {
@@ -71,10 +70,6 @@ struct MisMeeterMicrophoneMuteControl: ControlWidget {
             }
             // ON means muted, matching the native Silent Mode visual language.
             .tint(.red)
-            // A stale system surface must never be able to issue a meaningful mute
-            // command when the transport is not running. Runtime guards remain as a
-            // second line of defense for an interaction already in flight.
-            .disabled(!value.isActive)
         }
         .displayName("MisMeeter TX Mute")
         .description("Mute or unmute MisMeeter microphone transmission.")
@@ -131,7 +126,6 @@ struct MisMeeterReceiveMuteControl: ControlWidget {
                 )
             }
             .tint(.red)
-            .disabled(!value.isActive)
         }
         .displayName("MisMeeter RX Mute")
         .description("Mute or unmute MisMeeter receive playback.")

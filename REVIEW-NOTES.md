@@ -1,19 +1,25 @@
-# MisMeeter 3.3.5 — RX speaker recovery + clearer native Controls
+# MisMeeter 3.3.6 — Control state presentation fix
 
+## Fixed
 
-- Fixed RX receiving packets with silent device output: RX-only now uses `AVAudioSession.Category.playback`; duplex uses `playAndRecord`.
-- Added receiver recovery for route changes, audio-session interruptions, and `AVAudioEngineConfigurationChange`.
-- Receiver validates that a hardware output format exists before starting and reasserts the session when TX starts/stops while RX remains active.
-- Changed Control Center visuals to a stable green ON tint plus explicit filled/slashed symbols and `TX ON / TX MUTED` / `RX ON / RX MUTED` status text.
-- Fixed the root cause of the 3.3.3 CI regression: XcodeGen no longer recursively includes whole source directories.
-- App and Widget source membership is now explicit and reproducible.
-- CI regenerates the Xcode project from scratch and rejects all known legacy Now Playing / old TX sources.
-- Removed the third Stop All system Control; Control Center / Lock Screen expose only Mic and RX as requested.
-- Mic/RX Controls remain exact-value, stateful, `.alwaysAllowed`, runtime-authoritative toggles.
-- Replaced the single control-command slot with independent Mic / RX / Stop All mailboxes.
-- Removed snapshot-to-runtime reconciliation; the shared snapshot is output-only truth from the audio runtime.
-- Hardened stop-state ordering to avoid transient stale transport snapshots.
-- Fixed the current `MicrophoneEngine` immutable-buffer compiler warning.
-- Dynamic Island remains ActivityKit-only with RX + TX together in compact leading and no compact trailing content.
-- Automatic adaptive RX jitter remains enabled.
-- Version 3.3.5, build 47.
+- Replaced `ControlWidgetToggle` for TX/RX with state-aware `ControlWidgetButton` controls.
+- Muted is no longer presented as a dim/neutral OFF toggle.
+- TX muted is rendered red with `mic.slash.fill`.
+- RX muted is rendered red with `speaker.slash.fill`.
+- Active TX/RX is rendered green with the normal active symbol.
+- Idle controls remain neutral and disabled.
+- Control actions continue to read the latest runtime snapshot and toggle the real applied state.
+- Kept the existing control kind identifiers so users should not need to re-add the controls after upgrading.
+- Added `ControlCenter.shared.reloadAllControls()` at app launch so installed controls rebuild the new button template immediately after an upgrade.
+- Removed the now-unused `SetMicrophoneEnabledIntent` and `SetReceiveEnabledIntent` sources.
+
+## Preserved from 3.3.5
+
+- RX-only `.playback` audio-session policy.
+- Duplex `.playAndRecord` + speaker routing.
+- Audio-engine route/interruption/configuration recovery.
+- Adaptive low-latency receive jitter.
+- Dynamic Island RX + TX compact-leading layout.
+- Explicit XcodeGen source membership and legacy-source CI guards.
+
+Version 3.3.6, build 48.

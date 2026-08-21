@@ -2,12 +2,20 @@ import AppIntents
 import SwiftUI
 import WidgetKit
 
-/// Snapshot-backed state used by the native iOS Controls.
-/// `isOn` means the audio path is currently audible/active, while
-/// `isAvailable` means the corresponding transport actually exists.
+/// Runtime-backed state used by MisMeeter's native iOS Controls.
+///
+/// These controls intentionally use `ControlWidgetButton` rather than
+/// `ControlWidgetToggle`. A system toggle visually de-emphasizes its OFF state,
+/// which is the wrong semantic for MisMeeter: "muted" is still an important,
+/// active transport state. A button lets us keep the control illuminated and
+/// communicate the real state explicitly with tint + SF Symbol:
+///
+/// - green + normal symbol  -> path is active / audible
+/// - red + slashed symbol   -> path is active but muted
+/// - neutral + plain symbol -> transport is idle and the control is disabled
 struct TransportControlValue: Sendable {
-    let isOn: Bool
     let isAvailable: Bool
+    let isMuted: Bool
 }
 
 @available(iOSApplicationExtension 18.0, *)
@@ -17,49 +25,60 @@ struct MisMeeterMicrophoneMuteControl: ControlWidget {
             kind: SharedAppState.ControlKinds.microphone,
             provider: Provider()
         ) { state in
-            ControlWidgetToggle(
-                "TX",
-                isOn: state.isOn,
-                action: SetMicrophoneEnabledIntent()
-            ) { isOn in
+            ControlWidgetButton(action: ToggleMuteIntent()) {
                 Label {
-                    Text(state.isAvailable ? (isOn ? "TX ON" : "TX MUTED") : "TX IDLE")
+                    Text(Self.title(for: state))
                 } icon: {
-                    Image(systemName: state.isAvailable
-                        ? (isOn ? "mic.fill" : "mic.slash.fill")
-                        : "mic")
+                    Image(systemName: Self.symbol(for: state))
+                        .contentTransition(.identity)
                 }
-                .controlWidgetStatus(
-                    state.isAvailable
-                        ? (isOn ? "TX microphone active" : "TX microphone muted")
-                        : "TX is not running"
-                )
-                .controlWidgetActionHint(
-                    state.isAvailable
-                        ? (isOn ? "Mute TX microphone" : "Unmute TX microphone")
-                        : "TX is idle"
-                )
+                .controlWidgetStatus(Self.status(for: state))
+                .controlWidgetActionHint(Self.actionHint(for: state))
             }
-            // Use one stable tint. Control Center uses the tint to make the ON
-            // state visibly active; OFF remains neutral, while the slash symbol
-            // and explicit status distinguish mute from active at every size.
-            .tint(.green)
+            // Keep mute visually prominent. Unlike ControlWidgetToggle, a button
+            // doesn't turn the muted state into a neutral "OFF" appearance.
+            .tint(Self.tint(for: state))
             .disabled(!state.isAvailable)
         }
         .displayName("MisMeeter TX")
         .description("Mute or unmute the active MisMeeter microphone transmission.")
     }
 
+    private static func title(for state: TransportControlValue) -> String {
+        guard state.isAvailable else { return "TX IDLE" }
+        return state.isMuted ? "TX MUTED" : "TX ON"
+    }
+
+    private static func symbol(for state: TransportControlValue) -> String {
+        guard state.isAvailable else { return "mic" }
+        return state.isMuted ? "mic.slash.fill" : "mic.fill"
+    }
+
+    private static func tint(for state: TransportControlValue) -> Color? {
+        guard state.isAvailable else { return nil }
+        return state.isMuted ? .red : .green
+    }
+
+    private static func status(for state: TransportControlValue) -> String {
+        guard state.isAvailable else { return "TX is not running" }
+        return state.isMuted ? "TX microphone muted" : "TX microphone active"
+    }
+
+    private static func actionHint(for state: TransportControlValue) -> String {
+        guard state.isAvailable else { return "TX is idle" }
+        return state.isMuted ? "Unmute TX microphone" : "Mute TX microphone"
+    }
+
     struct Provider: ControlValueProvider {
         var previewValue: TransportControlValue {
-            TransportControlValue(isOn: true, isAvailable: true)
+            TransportControlValue(isAvailable: true, isMuted: false)
         }
 
         func currentValue() async throws -> TransportControlValue {
             let snapshot = SharedAppState.readSnapshot()
             return TransportControlValue(
-                isOn: snapshot.isStreaming && !snapshot.isMuted,
-                isAvailable: snapshot.isStreaming
+                isAvailable: snapshot.isStreaming,
+                isMuted: snapshot.isMuted
             )
         }
     }
@@ -72,46 +91,58 @@ struct MisMeeterReceiveMuteControl: ControlWidget {
             kind: SharedAppState.ControlKinds.receive,
             provider: Provider()
         ) { state in
-            ControlWidgetToggle(
-                "RX",
-                isOn: state.isOn,
-                action: SetReceiveEnabledIntent()
-            ) { isOn in
+            ControlWidgetButton(action: ToggleReceiveMuteIntent()) {
                 Label {
-                    Text(state.isAvailable ? (isOn ? "RX ON" : "RX MUTED") : "RX IDLE")
+                    Text(Self.title(for: state))
                 } icon: {
-                    Image(systemName: state.isAvailable
-                        ? (isOn ? "speaker.wave.3.fill" : "speaker.slash.fill")
-                        : "speaker")
+                    Image(systemName: Self.symbol(for: state))
+                        .contentTransition(.identity)
                 }
-                .controlWidgetStatus(
-                    state.isAvailable
-                        ? (isOn ? "RX audio active" : "RX audio muted")
-                        : "RX is not running"
-                )
-                .controlWidgetActionHint(
-                    state.isAvailable
-                        ? (isOn ? "Mute RX audio" : "Unmute RX audio")
-                        : "RX is idle"
-                )
+                .controlWidgetStatus(Self.status(for: state))
+                .controlWidgetActionHint(Self.actionHint(for: state))
             }
-            .tint(.green)
+            .tint(Self.tint(for: state))
             .disabled(!state.isAvailable)
         }
         .displayName("MisMeeter RX")
         .description("Mute or unmute active MisMeeter receive playback.")
     }
 
+    private static func title(for state: TransportControlValue) -> String {
+        guard state.isAvailable else { return "RX IDLE" }
+        return state.isMuted ? "RX MUTED" : "RX ON"
+    }
+
+    private static func symbol(for state: TransportControlValue) -> String {
+        guard state.isAvailable else { return "speaker" }
+        return state.isMuted ? "speaker.slash.fill" : "speaker.wave.3.fill"
+    }
+
+    private static func tint(for state: TransportControlValue) -> Color? {
+        guard state.isAvailable else { return nil }
+        return state.isMuted ? .red : .green
+    }
+
+    private static func status(for state: TransportControlValue) -> String {
+        guard state.isAvailable else { return "RX is not running" }
+        return state.isMuted ? "RX audio muted" : "RX audio active"
+    }
+
+    private static func actionHint(for state: TransportControlValue) -> String {
+        guard state.isAvailable else { return "RX is idle" }
+        return state.isMuted ? "Unmute RX audio" : "Mute RX audio"
+    }
+
     struct Provider: ControlValueProvider {
         var previewValue: TransportControlValue {
-            TransportControlValue(isOn: true, isAvailable: true)
+            TransportControlValue(isAvailable: true, isMuted: false)
         }
 
         func currentValue() async throws -> TransportControlValue {
             let snapshot = SharedAppState.readSnapshot()
             return TransportControlValue(
-                isOn: snapshot.isReceiving && !snapshot.isReceiveMuted,
-                isAvailable: snapshot.isReceiving
+                isAvailable: snapshot.isReceiving,
+                isMuted: snapshot.isReceiveMuted
             )
         }
     }

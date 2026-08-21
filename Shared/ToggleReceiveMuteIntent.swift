@@ -1,8 +1,7 @@
 import AppIntents
-import WidgetKit
 
-/// Live Activity RX toggle that asks the running audio engine for one exact target
-/// value instead of publishing speculative state from the extension process.
+/// Live Activity RX toggle. Execution occurs in the app process so no shared-state
+/// read is needed to decide the next value.
 struct ToggleReceiveMuteIntent: LiveActivityIntent {
     static var title: LocalizedStringResource = "Toggle Receive Audio"
     static var description = IntentDescription("Mute or unmute MisMeeter receive playback while keeping the receiver synchronized.")
@@ -10,18 +9,9 @@ struct ToggleReceiveMuteIntent: LiveActivityIntent {
     static var authenticationPolicy: IntentAuthenticationPolicy = .alwaysAllowed
 
     func perform() async throws -> some IntentResult {
-        let snapshot = SharedAppState.readSnapshot()
-        guard snapshot.isReceiving else { return .result() }
-
-        let desiredMuted = !snapshot.isReceiveMuted
-        SharedAppState.issue(.setReceiveMuted, value: desiredMuted)
-        await SharedAppState.waitForSnapshot(timeoutMilliseconds: 650) { updated in
-            updated.isReceiving && updated.isReceiveMuted == desiredMuted
-        }
-
-        if #available(iOS 18.0, *) {
-            ControlCenter.shared.reloadControls(ofKind: SharedAppState.ControlKinds.receive)
-        }
+        #if MISMEETER_APP
+        _ = MisMeeterRuntime.shared.toggleReceiveMuted()
+        #endif
         return .result()
     }
 }

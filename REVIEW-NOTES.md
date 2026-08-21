@@ -1,10 +1,12 @@
-# MisMeeter 3.3.7 review notes
+# MisMeeter 3.3.8 review notes
 
-- Fixed Control Center controls stuck grey/IDLE after transport startup.
-- Removed the premature `reloadAllControls()` from `App.init`.
-- Shared transport snapshot now uses an atomic JSON file in the App Group container, with UserDefaults only as fallback.
-- Control command mailboxes now use atomic per-action App Group files before posting the Darwin notification.
-- TX/RX Control Center actions use dedicated plain `AppIntent` implementations instead of the Live Activity intents.
-- Controls are never disabled from a potentially cached provider value; idle taps are safely ignored by the intent after an authoritative state check.
-- Visual state remains: green normal symbol = active, red slashed symbol = muted, neutral = idle.
-- Live Activity / Dynamic Island behavior and the 3.3.5 RX speaker fixes are unchanged.
+- Reworked Control Center controls as native `ControlWidgetToggle` mute switches.
+- ON means muted; muted controls render with red tint and slashed symbols.
+- Added `SetMicrophoneMuteControlIntent` and `SetReceiveMuteControlIntent` as `SetValueIntent + LiveActivityIntent`.
+- Control intents execute in the app process and call `MisMeeterRuntime` directly; no App Group command mailbox or Darwin command bridge is required.
+- Live Activity mute/stop intents now also act directly on `MisMeeterRuntime` in the app process.
+- Removed `SharedControlObserver`, command mailbox files, command IDs, and command polling.
+- Fixed stale cross-process snapshots by adding `publishedAt` and selecting the newest valid file/UserDefaults copy.
+- Bumped the shared snapshot namespace to v8 so stale v7 files cannot shadow current state.
+- Control providers prefer the active ActivityKit content state, matching the Dynamic Island, with App Group state as fallback.
+- RX speaker/audio-session recovery and adaptive jitter behavior are unchanged.

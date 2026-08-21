@@ -37,6 +37,8 @@ targets:
       - path: Shared/MisMeeterRuntime.swift
       - path: Shared/PlaybackRingBuffer.swift
       - path: Shared/SharedAppState.swift
+      - path: Shared/SetMicrophoneMuteControlIntent.swift
+      - path: Shared/SetReceiveMuteControlIntent.swift
       - path: Shared/ToggleMuteIntent.swift
       - path: Shared/ToggleReceiveMuteIntent.swift
       - path: Shared/TransportState.swift
@@ -55,8 +57,8 @@ targets:
         CFBundleInfoDictionaryVersion: "6.0"
         CFBundleName: $(PRODUCT_NAME)
         CFBundlePackageType: APPL
-        CFBundleShortVersionString: "3.3.7"
-        CFBundleVersion: "49"
+        CFBundleShortVersionString: "3.3.8"
+        CFBundleVersion: "50"
         LSRequiresIPhoneOS: true
         NSSupportsLiveActivities: true
         NSMicrophoneUsageDescription: "MisMeeter uses the iPhone microphone to transmit live audio to your VBAN destination."
@@ -78,6 +80,7 @@ targets:
         TARGETED_DEVICE_FAMILY: "1"
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         CODE_SIGN_ENTITLEMENTS: MisMeeter/MisMeeter.entitlements
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) MISMEETER_APP"
     dependencies:
       - target: MisMeeterWidget
         embed: true
@@ -93,8 +96,8 @@ targets:
       - path: MisMeeterWidget/MisMeeterWidgetBundle.swift
       - path: Shared/MicActivityAttributes.swift
       - path: Shared/SharedAppState.swift
-      - path: Shared/ToggleMicrophoneControlIntent.swift
-      - path: Shared/ToggleReceiveControlIntent.swift
+      - path: Shared/SetMicrophoneMuteControlIntent.swift
+      - path: Shared/SetReceiveMuteControlIntent.swift
       - path: Shared/ToggleMuteIntent.swift
       - path: Shared/ToggleReceiveMuteIntent.swift
       - path: Shared/EndLiveActivityIntent.swift
@@ -107,8 +110,8 @@ targets:
         CFBundleInfoDictionaryVersion: "6.0"
         CFBundleName: $(PRODUCT_NAME)
         CFBundlePackageType: XPC!
-        CFBundleShortVersionString: "3.3.7"
-        CFBundleVersion: "49"
+        CFBundleShortVersionString: "3.3.8"
+        CFBundleVersion: "50"
         NSExtension:
           NSExtensionPointIdentifier: com.apple.widgetkit-extension
     settings:
@@ -119,3 +122,4 @@ targets:
         SKIP_INSTALL: YES
         TARGETED_DEVICE_FAMILY: "1"
         CODE_SIGN_ENTITLEMENTS: MisMeeterWidget/MisMeeterWidget.entitlements
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) MISMEETER_WIDGET"

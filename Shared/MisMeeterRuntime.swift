@@ -8,7 +8,6 @@ final class MisMeeterRuntime {
     private let transmitter: VBANTransmitter
     private let microphone: MicrophoneEngine
     private let receiver: VBANReceiver
-    private let controlObserver = SharedControlObserver()
 
     private var _isMuted = false
     private var _isStreaming = false
@@ -67,19 +66,6 @@ final class MisMeeterRuntime {
             self?.onReceiverDiagnostics?(received, rejected, lost, buffered, underflows, primed, rate, targetMS)
         }
 
-        controlObserver.start { [weak self] command in
-            guard let self else { return }
-            switch command.action {
-            case .setMicrophoneMuted:
-                guard let value = command.value else { return }
-                self.setMuted(value)
-            case .setReceiveMuted:
-                guard let value = command.value else { return }
-                self.setReceiveMuted(value)
-            case .stopAll:
-                Task { await self.stopAll() }
-            }
-        }
         publishSharedState(status: "Ready")
     }
 
@@ -129,7 +115,7 @@ final class MisMeeterRuntime {
         publishSharedState(status: isReceiving ? "Duplex live" : "Live")
 
         // ActivityKit is the only Dynamic Island / Lock Screen presentation surface.
-        // There is deliberately no MediaPlayer / Now Playing session: that avoids the
+        // There is deliberately no legacy system-media session: that avoids the
         // duplicate Dynamic Island presentation entirely.
         await ensureLiveActivity()
     }

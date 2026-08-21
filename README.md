@@ -1,4 +1,3 @@
-MisMeeter
 ## MisMeeter
 
 MisMeeter is a native iOS app for real-time VBAN audio transmission and reception over local networks.

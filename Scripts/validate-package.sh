@@ -33,20 +33,20 @@ PY
 
 # Control architecture invariants.
 grep -Fq 'ControlWidgetToggle(' MisMeeterWidget/MisMeeterSystemControls.swift
-grep -Fq 'func currentValue() async throws -> MuteControlPresentationValue' MisMeeterWidget/MisMeeterSystemControls.swift
+grep -Fq 'StaticControlConfiguration(kind:' MisMeeterWidget/MisMeeterSystemControls.swift
+grep -Fq 'SharedAppState.readSnapshot()' MisMeeterWidget/MisMeeterSystemControls.swift
+! grep -Fq 'struct Provider:' MisMeeterWidget/MisMeeterSystemControls.swift
 grep -Fq '.tint(.red)' MisMeeterWidget/MisMeeterSystemControls.swift
 ! grep -Fq 'Activity<' MisMeeterWidget/MisMeeterSystemControls.swift
-grep -Fq 'state.txActive' MisMeeterWidget/MisMeeterSystemControls.swift
-grep -Fq 'state.rxActive' MisMeeterWidget/MisMeeterSystemControls.swift
 grep -Fq 'SetValueIntent, LiveActivityIntent' Shared/SetMicrophoneMuteControlIntent.swift
 grep -Fq 'SetValueIntent, LiveActivityIntent' Shared/SetReceiveMuteControlIntent.swift
 ! grep -Fq 'reloadControls' Shared/SetMicrophoneMuteControlIntent.swift
 ! grep -Fq 'reloadControls' Shared/SetReceiveMuteControlIntent.swift
 ! grep -Fq 'ControlCenter' Shared/SharedAppState.swift
-grep -Fq 'ControlCenter.shared.reloadAllControls()' Shared/SharedControlState.swift
-grep -Fq 'var txActive: Bool' Shared/SharedControlState.swift
-grep -Fq 'var rxActive: Bool' Shared/SharedControlState.swift
-grep -Fq 'control-state-v4.0.1.json' Shared/SharedControlState.swift
+grep -Fq 'ControlCenter.shared.reloadControls(ofKind: Kinds.receive)' Shared/SharedControlState.swift
+grep -Fq 'ControlCenter.shared.reloadControls(ofKind: Kinds.microphone)' Shared/SharedControlState.swift
+! grep -Fq 'struct SharedControlState:' Shared/SharedControlState.swift
+! grep -Fq 'control-state-' Shared/SharedControlState.swift
 grep -Fq 'publishControlState(reloadControls: true)' Shared/MisMeeterRuntime.swift
 grep -Fq 'prepareForProcessTermination()' Shared/MisMeeterRuntime.swift
 grep -Fq 'didFinishLaunchingWithOptions' MisMeeter/MisMeeterApp.swift
@@ -63,7 +63,7 @@ fi
 grep -Fq 'group.dev.mismeeter.app' MisMeeter/MisMeeter.entitlements
 grep -Fq 'group.dev.mismeeter.app' MisMeeterWidget/MisMeeterWidget.entitlements
 grep -Fq 'static let appGroup = "group.dev.mismeeter.app"' Shared/SharedAppState.swift
-grep -Fq 'CFBundleShortVersionString: "4.0.1"' project.yml
-grep -Fq 'CFBundleVersion: "101"' project.yml
+grep -Fq 'CFBundleShortVersionString: "4.0.2"' project.yml
+grep -Fq 'CFBundleVersion: "102"' project.yml
 
 echo 'MisMeeter package validation passed.'

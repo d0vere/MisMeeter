@@ -19,7 +19,6 @@ final class MisMeeterRuntime {
     private var _preset = VBANPreset(name: "Preset 1", host: "", port: 6980, streamName: "MisMeeter")
     private var _receivePreset = VBANReceivePreset(name: "Receive", port: 6980, streamName: "MisMeeterRX")
     private var _activityPresentationRevision: UInt64 = 0
-    private var _controlRevision: UInt64 = SharedControlStateStore.read().revision
 
     var onStatusChange: ((String) -> Void)?
     var onMeter: ((Float) -> Void)?
@@ -401,8 +400,9 @@ final class MisMeeterRuntime {
     // there is intentionally no snapshot -> runtime reconciliation loop.
 
     func refreshSystemControls() {
-        // Re-publish first, then reload. This is intentionally safe to call when
-        // the app becomes active so an extension never renders an old revision.
+        // Re-publish the canonical transport snapshot first, then invalidate the
+        // exact Control kinds. The extension rebuilds directly from this snapshot.
+        publishSharedState(status: currentStatusText)
         publishControlState(reloadControls: true)
     }
 
@@ -522,28 +522,15 @@ final class MisMeeterRuntime {
         )
     }
 
-    /// Publishes the complete Control Center presentation state atomically.
+    /// Invalidates the system Controls after an external runtime mutation.
     ///
-    /// `reloadControls` is true only when the mutation originated outside the
-    /// interacted Control itself (app UI, widget, Live Activity, start/stop, lifecycle).
-    /// A SetValueIntent interaction relies on WidgetKit's automatic post-perform reload.
+    /// There is intentionally no second Control-specific state file in 4.0.2. The
+    /// authoritative state was already persisted by `publishSharedState(status:)`
+    /// before this method is called. A SetValueIntent interaction passes `false`
+    /// here and relies on WidgetKit's automatic post-perform reload instead.
     private func publishControlState(reloadControls: Bool = false) {
-        let state = stateQueue.sync { () -> SharedControlState in
-            _controlRevision &+= 1
-            return SharedControlState(
-                txActive: _isStreaming,
-                txMuted: _isStreaming && _isMuted,
-                rxActive: _isReceiving,
-                rxMuted: _isReceiving && _isReceiveMuted,
-                revision: _controlRevision,
-                publishedAt: Date()
-            )
-        }
-
-        let didWrite = SharedControlStateStore.write(state)
-        if reloadControls && didWrite {
-            SharedControlStateStore.reloadAllControls()
-        }
+        guard reloadControls else { return }
+        SharedControlStateStore.reloadMisMeeterControls()
     }
 
     private func publishSharedState(status: String) {

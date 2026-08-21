@@ -123,7 +123,9 @@ final class MisMeeterRuntime {
             _isStreaming = true
             if _startedAt == nil { _startedAt = Date() }
         }
-        if isReceiving { AudioSessionCoordinator.shared.forceSpeaker() }
+        if isReceiving {
+            receiver.refreshAudioSession(transmitterActive: true)
+        }
         publishSharedState(status: isReceiving ? "Duplex live" : "Live")
 
         // ActivityKit is the only Dynamic Island / Lock Screen presentation surface.
@@ -151,6 +153,9 @@ final class MisMeeterRuntime {
         publishSharedState(status: keepAudioSession ? receiveStatusText : "Ready")
         microphone.stop(deactivateSession: !keepAudioSession)
         transmitter.stop()
+        if keepAudioSession {
+            receiver.refreshAudioSession(transmitterActive: false)
+        }
         await updateActivityLifecycle()
     }
 

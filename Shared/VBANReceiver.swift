@@ -7,6 +7,7 @@ enum VBANReceiverError: LocalizedError {
     case socketCreation
     case bindFailed(UInt16)
     case audioFormat
+    case audioOutputUnavailable
 
     var errorDescription: String? {
         switch self {
@@ -16,6 +17,8 @@ enum VBANReceiverError: LocalizedError {
             return "Could not bind UDP port \(port). It may already be in use."
         case .audioFormat:
             return "Could not create the 48 kHz stereo playback format."
+        case .audioOutputUnavailable:
+            return "The iPhone audio output is not available."
         }
     }
 }
@@ -40,6 +43,10 @@ final class VBANReceiver {
     private var socketFD: Int32 = -1
     private var readSource: DispatchSourceRead?
     private var controlTimer: DispatchSourceTimer?
+    private var configurationObserver: NSObjectProtocol?
+    private var routeObserver: NSObjectProtocol?
+    private var interruptionObserver: NSObjectProtocol?
+    private var transmitterActiveForSession = false
 
     private var expectedStreamName = "MisMeeterRX"
     private var listenPort: UInt16 = 6980
@@ -95,6 +102,16 @@ final class VBANReceiver {
         Double
     ) -> Void)?
 
+    init() {
+        installAudioObservers()
+    }
+
+    deinit {
+        if let configurationObserver { NotificationCenter.default.removeObserver(configurationObserver) }
+        if let routeObserver { NotificationCenter.default.removeObserver(routeObserver) }
+        if let interruptionObserver { NotificationCenter.default.removeObserver(interruptionObserver) }
+    }
+
     func start(
         preset: VBANReceivePreset,
         transmitterAlreadyActive: Bool
@@ -120,15 +137,10 @@ final class VBANReceiver {
             targetFrames: frames(forMS: adaptiveTargetMS)
         )
 
-        if !transmitterAlreadyActive {
-            try AudioSessionCoordinator.shared
-                .configureForDuplex(
-                    voiceProcessing: false
-                )
-        } else {
-            AudioSessionCoordinator.shared
-                .forceSpeaker()
-        }
+        transmitterActiveForSession = transmitterAlreadyActive
+        try AudioSessionCoordinator.shared.ensureReceivePlayback(
+            transmitterActive: transmitterAlreadyActive
+        )
 
         guard let format = AVAudioFormat(
             standardFormatWithSampleRate:
@@ -211,13 +223,26 @@ final class VBANReceiver {
             format: format
         )
 
+        // Accessing mainMixerNode creates and connects the engine's output path.
+        // Leave the mixer -> output format implicit so AVAudioEngine can track
+        // hardware route changes automatically.
+        let outputFormat = engine.outputNode.inputFormat(forBus: 0)
+        guard outputFormat.sampleRate > 0, outputFormat.channelCount > 0 else {
+            engine.detach(node)
+            engine.detach(speed)
+            sourceNode = nil
+            timePitch = nil
+            throw VBANReceiverError.audioOutputUnavailable
+        }
+
         engine.mainMixerNode.outputVolume = 1.0
         isOutputMuted = false
         engine.prepare()
         try engine.start()
 
-        AudioSessionCoordinator.shared
-            .forceSpeaker()
+        if transmitterAlreadyActive {
+            AudioSessionCoordinator.shared.forceSpeaker()
+        }
 
         do {
             try openSocket()
@@ -252,6 +277,7 @@ final class VBANReceiver {
     ) {
         isRunning = false
         isOutputMuted = false
+        transmitterActiveForSession = false
 
         controlTimer?.setEventHandler {}
         controlTimer?.cancel()
@@ -310,6 +336,94 @@ final class VBANReceiver {
         isOutputMuted = muted
         engine.mainMixerNode.outputVolume = muted ? 0.0 : 1.0
         onStatus?(muted ? "Receive muted" : "Listening • \(expectedStreamName) • UDP \(listenPort)")
+    }
+
+    /// Called when TX starts/stops while RX keeps running. Reasserting the
+    /// session and restarting a stopped engine prevents category transitions
+    /// from leaving a graph that still reports packets but produces no sound.
+    func refreshAudioSession(transmitterActive: Bool) {
+        guard isRunning else { return }
+        transmitterActiveForSession = transmitterActive
+        do {
+            try AudioSessionCoordinator.shared.ensureReceivePlayback(
+                transmitterActive: transmitterActive
+            )
+            if transmitterActive {
+                AudioSessionCoordinator.shared.forceSpeaker()
+            }
+            recoverOutputEngineIfNeeded(forceRestart: true)
+        } catch {
+            onStatus?("Audio output error • \(error.localizedDescription)")
+        }
+    }
+
+    private func installAudioObservers() {
+        configurationObserver = NotificationCenter.default.addObserver(
+            forName: .AVAudioEngineConfigurationChange,
+            object: engine,
+            queue: nil
+        ) { [weak self] _ in
+            // Apple stops/uninitializes the engine before posting this notification.
+            // The nodes stay attached, so restarting the existing graph is sufficient.
+            self?.recoverOutputEngineIfNeeded(forceRestart: false)
+        }
+
+        routeObserver = NotificationCenter.default.addObserver(
+            forName: AVAudioSession.routeChangeNotification,
+            object: nil,
+            queue: nil
+        ) { [weak self] _ in
+            guard let self, self.isRunning else { return }
+            do {
+                try AudioSessionCoordinator.shared.ensureReceivePlayback(
+                    transmitterActive: self.transmitterActiveForSession
+                )
+                if self.transmitterActiveForSession {
+                    AudioSessionCoordinator.shared.forceSpeaker()
+                }
+            } catch {
+                self.onStatus?("Audio route error • \(error.localizedDescription)")
+            }
+            self.recoverOutputEngineIfNeeded(forceRestart: false)
+        }
+
+        interruptionObserver = NotificationCenter.default.addObserver(
+            forName: AVAudioSession.interruptionNotification,
+            object: nil,
+            queue: nil
+        ) { [weak self] note in
+            guard let self, self.isRunning,
+                  let raw = note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
+                  let type = AVAudioSession.InterruptionType(rawValue: raw),
+                  type == .ended else { return }
+            do {
+                try AudioSessionCoordinator.shared.ensureReceivePlayback(
+                    transmitterActive: self.transmitterActiveForSession
+                )
+            } catch {
+                self.onStatus?("Audio resume error • \(error.localizedDescription)")
+            }
+            self.recoverOutputEngineIfNeeded(forceRestart: true)
+        }
+    }
+
+    private func recoverOutputEngineIfNeeded(forceRestart: Bool) {
+        guard isRunning, sourceNode != nil else { return }
+        controlQueue.async { [weak self] in
+            guard let self, self.isRunning else { return }
+            do {
+                if forceRestart && self.engine.isRunning {
+                    self.engine.stop()
+                }
+                if !self.engine.isRunning {
+                    self.engine.prepare()
+                    try self.engine.start()
+                }
+                self.engine.mainMixerNode.outputVolume = self.isOutputMuted ? 0.0 : 1.0
+            } catch {
+                self.onStatus?("Audio engine error • \(error.localizedDescription)")
+            }
+        }
     }
 
     private func startClockRecovery() {

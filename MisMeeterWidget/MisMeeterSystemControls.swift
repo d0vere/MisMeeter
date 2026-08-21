@@ -3,16 +3,13 @@ import SwiftUI
 import WidgetKit
 
 /// Snapshot-backed state used by the native iOS Controls.
-/// `isOn` is the value rendered by the toggle, while `isAvailable` prevents
-/// controls from pretending they can change an inactive transport.
+/// `isOn` means the audio path is currently audible/active, while
+/// `isAvailable` means the corresponding transport actually exists.
 struct TransportControlValue: Sendable {
     let isOn: Bool
     let isAvailable: Bool
 }
 
-/// Native iOS 18 Controls are MisMeeter's primary locked-device interaction surface.
-/// They use ControlWidgetToggle + SetValueIntent, so iOS sends an explicit target value
-/// instead of forcing the app to infer a blind toggle from potentially stale UI state.
 @available(iOSApplicationExtension 18.0, *)
 struct MisMeeterMicrophoneMuteControl: ControlWidget {
     var body: some ControlWidgetConfiguration {
@@ -21,22 +18,36 @@ struct MisMeeterMicrophoneMuteControl: ControlWidget {
             provider: Provider()
         ) { state in
             ControlWidgetToggle(
-                "MisMeeter Mic",
+                "TX",
                 isOn: state.isOn,
                 action: SetMicrophoneEnabledIntent()
             ) { isOn in
-                Label(
-                    state.isAvailable ? (isOn ? "Mic On" : "Mic Muted") : "Mic Idle",
-                    systemImage: state.isAvailable
+                Label {
+                    Text(state.isAvailable ? (isOn ? "TX ON" : "TX MUTED") : "TX IDLE")
+                } icon: {
+                    Image(systemName: state.isAvailable
                         ? (isOn ? "mic.fill" : "mic.slash.fill")
-                        : "mic"
+                        : "mic")
+                }
+                .controlWidgetStatus(
+                    state.isAvailable
+                        ? (isOn ? "TX microphone active" : "TX microphone muted")
+                        : "TX is not running"
+                )
+                .controlWidgetActionHint(
+                    state.isAvailable
+                        ? (isOn ? "Mute TX microphone" : "Unmute TX microphone")
+                        : "TX is idle"
                 )
             }
+            // Use one stable tint. Control Center uses the tint to make the ON
+            // state visibly active; OFF remains neutral, while the slash symbol
+            // and explicit status distinguish mute from active at every size.
+            .tint(.green)
             .disabled(!state.isAvailable)
-            .tint(state.isAvailable ? (state.isOn ? .green : .red) : .gray)
         }
-        .displayName("MisMeeter Microphone")
-        .description("Enable or mute the active MisMeeter microphone transmission.")
+        .displayName("MisMeeter TX")
+        .description("Mute or unmute the active MisMeeter microphone transmission.")
     }
 
     struct Provider: ControlValueProvider {
@@ -62,22 +73,33 @@ struct MisMeeterReceiveMuteControl: ControlWidget {
             provider: Provider()
         ) { state in
             ControlWidgetToggle(
-                "MisMeeter RX",
+                "RX",
                 isOn: state.isOn,
                 action: SetReceiveEnabledIntent()
             ) { isOn in
-                Label(
-                    state.isAvailable ? (isOn ? "RX On" : "RX Muted") : "RX Idle",
-                    systemImage: state.isAvailable
-                        ? (isOn ? "speaker.wave.2.fill" : "speaker.slash.fill")
-                        : "speaker"
+                Label {
+                    Text(state.isAvailable ? (isOn ? "RX ON" : "RX MUTED") : "RX IDLE")
+                } icon: {
+                    Image(systemName: state.isAvailable
+                        ? (isOn ? "speaker.wave.3.fill" : "speaker.slash.fill")
+                        : "speaker")
+                }
+                .controlWidgetStatus(
+                    state.isAvailable
+                        ? (isOn ? "RX audio active" : "RX audio muted")
+                        : "RX is not running"
+                )
+                .controlWidgetActionHint(
+                    state.isAvailable
+                        ? (isOn ? "Mute RX audio" : "Unmute RX audio")
+                        : "RX is idle"
                 )
             }
+            .tint(.green)
             .disabled(!state.isAvailable)
-            .tint(state.isAvailable ? (state.isOn ? .green : .red) : .gray)
         }
-        .displayName("MisMeeter Receive")
-        .description("Enable or mute the active MisMeeter receive audio.")
+        .displayName("MisMeeter RX")
+        .description("Mute or unmute active MisMeeter receive playback.")
     }
 
     struct Provider: ControlValueProvider {

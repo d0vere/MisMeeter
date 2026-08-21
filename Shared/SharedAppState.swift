@@ -78,11 +78,22 @@ enum SharedControlAction: Int, Codable, CaseIterable, Hashable, Sendable {
     fileprivate var mailboxKey: String {
         switch self {
         case .setMicrophoneMuted:
-            return "control.command.v6.microphone"
+            return "control.command.v7.microphone"
         case .setReceiveMuted:
-            return "control.command.v6.receive"
+            return "control.command.v7.receive"
         case .stopAll:
-            return "control.command.v6.stopAll"
+            return "control.command.v7.stopAll"
+        }
+    }
+
+    fileprivate var mailboxFilename: String {
+        switch self {
+        case .setMicrophoneMuted:
+            return "control-command-v7-microphone.json"
+        case .setReceiveMuted:
+            return "control-command-v7-receive.json"
+        case .stopAll:
+            return "control-command-v7-stop-all.json"
         }
     }
 }
@@ -101,20 +112,59 @@ struct SharedControlCommand: Codable, Hashable, Sendable {
 
 enum SharedAppState {
     static let appGroup = "group.dev.mismeeter.app"
-    static let controlNotification = "dev.mismeeter.app.control.v5"
+    static let controlNotification = "dev.mismeeter.app.control.v7"
 
     enum ControlKinds {
         static let receive = "dev.mismeeter.app.control.receiveMute"
         static let microphone = "dev.mismeeter.app.control.microphoneMute"
     }
 
-    private static let snapshotKey = "transport.snapshot.v4"
+    private static let snapshotKey = "transport.snapshot.v7"
+    private static let snapshotFilename = "transport-snapshot-v7.json"
 
     private static var defaults: UserDefaults {
         UserDefaults(suiteName: appGroup) ?? .standard
     }
 
+    private static var groupContainerURL: URL? {
+        FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroup)
+    }
+
+    private static var snapshotURL: URL? {
+        groupContainerURL?.appendingPathComponent(snapshotFilename, isDirectory: false)
+    }
+
+    private static func commandURL(for action: SharedControlAction) -> URL? {
+        groupContainerURL?.appendingPathComponent(action.mailboxFilename, isDirectory: false)
+    }
+
+    private static func writeSharedData(_ data: Data, to url: URL) {
+        do {
+            try data.write(to: url, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+            // Controls are explicitly designed to work while the phone is locked.
+            // Keep App Group state readable after the user's first unlock following
+            // a reboot, which matches the lifetime of a running audio session.
+            try FileManager.default.setAttributes(
+                [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication],
+                ofItemAtPath: url.path
+            )
+        } catch {
+            // UserDefaults below remains the compatibility fallback.
+        }
+    }
+
+    /// Reads the cross-process transport state. The App Group file is authoritative
+    /// because atomic file replacement is immediately visible to the WidgetKit
+    /// extension, unlike a freshly-mutated UserDefaults cache in another process.
+    /// UserDefaults remains as a migration/fallback path for unusual environments.
     static func readSnapshot() -> SharedTransportSnapshot {
+        if let url = snapshotURL,
+           let data = try? Data(contentsOf: url),
+           let value = try? JSONDecoder().decode(SharedTransportSnapshot.self, from: data) {
+            return value
+        }
+
+        defaults.synchronize()
         guard let data = defaults.data(forKey: snapshotKey),
               let value = try? JSONDecoder().decode(SharedTransportSnapshot.self, from: data)
         else { return .idle }
@@ -125,7 +175,14 @@ enum SharedAppState {
         let previous = readSnapshot()
 
         if let data = try? JSONEncoder().encode(value) {
+            // Write the shared file *before* asking WidgetKit to reload. This closes
+            // the race where Control Center fetched the old IDLE state and cached a
+            // disabled control even though the runtime had already started.
+            if let url = snapshotURL {
+                writeSharedData(data, to: url)
+            }
             defaults.set(data, forKey: snapshotKey)
+            defaults.synchronize()
         }
 
         guard reloadWidgets else { return }
@@ -150,13 +207,15 @@ enum SharedAppState {
     static func issue(_ action: SharedControlAction, value: Bool? = nil) {
         let command = SharedControlCommand(action: action, value: value)
         if let data = try? JSONEncoder().encode(command) {
-            // One mailbox per action prevents a Mic tap, RX tap and Stop All tap
-            // from overwriting each other before the runtime consumes them. For
-            // repeated taps of the same action, only the newest exact target value
-            // matters, so replacing that mailbox is intentional and idempotent.
+            // One atomic mailbox file per action. The file is committed before the
+            // Darwin notification is posted, so the main process can never observe
+            // the wake-up before the command itself is visible.
+            if let url = commandURL(for: action) {
+                writeSharedData(data, to: url)
+            }
             defaults.set(data, forKey: action.mailboxKey)
+            defaults.synchronize()
         }
-        defaults.synchronize()
 
         CFNotificationCenterPostNotification(
             CFNotificationCenterGetDarwinNotifyCenter(),
@@ -168,6 +227,14 @@ enum SharedAppState {
     }
 
     static func pendingCommand(for action: SharedControlAction) -> SharedControlCommand? {
+        if let url = commandURL(for: action),
+           let data = try? Data(contentsOf: url),
+           let command = try? JSONDecoder().decode(SharedControlCommand.self, from: data),
+           command.action == action {
+            return command
+        }
+
+        defaults.synchronize()
         guard let data = defaults.data(forKey: action.mailboxKey),
               let command = try? JSONDecoder().decode(SharedControlCommand.self, from: data),
               command.action == action

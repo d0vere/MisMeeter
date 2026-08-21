@@ -12,7 +12,7 @@ import WidgetKit
 ///
 /// - green + normal symbol  -> path is active / audible
 /// - red + slashed symbol   -> path is active but muted
-/// - neutral + plain symbol -> transport is idle and the control is disabled
+/// - neutral + plain symbol -> transport is idle; tapping safely performs no action
 struct TransportControlValue: Sendable {
     let isAvailable: Bool
     let isMuted: Bool
@@ -25,7 +25,7 @@ struct MisMeeterMicrophoneMuteControl: ControlWidget {
             kind: SharedAppState.ControlKinds.microphone,
             provider: Provider()
         ) { state in
-            ControlWidgetButton(action: ToggleMuteIntent()) {
+            ControlWidgetButton(action: ToggleMicrophoneControlIntent()) {
                 Label {
                     Text(Self.title(for: state))
                 } icon: {
@@ -36,9 +36,10 @@ struct MisMeeterMicrophoneMuteControl: ControlWidget {
                 .controlWidgetActionHint(Self.actionHint(for: state))
             }
             // Keep mute visually prominent. Unlike ControlWidgetToggle, a button
-            // doesn't turn the muted state into a neutral "OFF" appearance.
+            // doesn't turn the muted state into a neutral "OFF" appearance. The
+            // button deliberately remains tappable even if WidgetKit briefly renders
+            // an IDLE value; the AppIntent re-checks the authoritative shared state.
             .tint(Self.tint(for: state))
-            .disabled(!state.isAvailable)
         }
         .displayName("MisMeeter TX")
         .description("Mute or unmute the active MisMeeter microphone transmission.")
@@ -91,7 +92,7 @@ struct MisMeeterReceiveMuteControl: ControlWidget {
             kind: SharedAppState.ControlKinds.receive,
             provider: Provider()
         ) { state in
-            ControlWidgetButton(action: ToggleReceiveMuteIntent()) {
+            ControlWidgetButton(action: ToggleReceiveControlIntent()) {
                 Label {
                     Text(Self.title(for: state))
                 } icon: {
@@ -101,8 +102,10 @@ struct MisMeeterReceiveMuteControl: ControlWidget {
                 .controlWidgetStatus(Self.status(for: state))
                 .controlWidgetActionHint(Self.actionHint(for: state))
             }
+            // Do not disable from provider state. A cached IDLE render must never
+            // make the control permanently untappable; the intent performs its own
+            // runtime availability check.
             .tint(Self.tint(for: state))
-            .disabled(!state.isAvailable)
         }
         .displayName("MisMeeter RX")
         .description("Mute or unmute active MisMeeter receive playback.")

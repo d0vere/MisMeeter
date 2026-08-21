@@ -1,6 +1,7 @@
 import AVFoundation
 import Darwin
 import Foundation
+import os
 
 enum VBANReceiverError: LocalizedError {
     case socketCreation
@@ -43,8 +44,30 @@ final class VBANReceiver {
     private var expectedStreamName = "MisMeeterRX"
     private var listenPort: UInt16 = 6980
 
-    private var configuredBufferMS: Double = 100
-    private var adaptiveTargetMS: Double = 100
+    // Fully automatic receive jitter target. Start conservatively, then converge
+    // toward the minimum measured-safe latency. Underflows raise the margin
+    // immediately; stable windows lower it gradually.
+    private let autoMinimumTargetMS: Double = 20
+    private let autoStartupTargetMS: Double = 35
+    private let autoMaximumTargetMS: Double = 250
+
+    private var adaptiveTargetMS: Double = 35
+    private var adaptiveSafetyMarginMS: Double = 15
+
+    private struct ArrivalJitterState {
+        var lastArrivalNS: UInt64?
+        var lastFrameCounter: UInt32?
+        var smoothedDeviationMS: Double = 0
+        var peakDeviationMS: Double = 0
+    }
+
+    private let arrivalJitter = OSAllocatedUnfairLock(
+        initialState: ArrivalJitterState()
+    )
+
+    // Reused decode buffers: avoids two heap allocations for every VBAN packet.
+    private var decodeLeft = [Float](repeating: 0, count: 256)
+    private var decodeRight = [Float](repeating: 0, count: 256)
 
     private var packetsReceived: UInt64 = 0
     private var packetsRejected: UInt64 = 0
@@ -83,15 +106,18 @@ final class VBANReceiver {
 
         listenPort = preset.port
 
-        configuredBufferMS =
-            max(40, min(300, preset.bufferMS))
+        adaptiveTargetMS = autoStartupTargetMS
+        adaptiveSafetyMarginMS = max(
+            0,
+            autoStartupTargetMS - autoMinimumTargetMS
+        )
 
-        adaptiveTargetMS =
-            configuredBufferMS
+        arrivalJitter.withLock { state in
+            state = ArrivalJitterState()
+        }
 
         ring.reset(
-            targetFrames:
-                frames(forMS: adaptiveTargetMS)
+            targetFrames: frames(forMS: adaptiveTargetMS)
         )
 
         if !transmitterAlreadyActive {
@@ -258,7 +284,7 @@ final class VBANReceiver {
 
         ring.reset(
             targetFrames:
-                frames(forMS: 100)
+                frames(forMS: autoStartupTargetMS)
         )
 
         if deactivateSession {
@@ -309,109 +335,139 @@ final class VBANReceiver {
     }
 
     /// VBAN sender and iPhone hardware have independent clocks.
-    /// v1.5 uses AVAudioUnitTimePitch so playback rate can be corrected
-    /// more aggressively without intentionally shifting pitch. The servo
-    /// keeps the jitter buffer near the selected/adaptive target.
+    /// Playback rate correction handles slow clock drift while the automatic
+    /// jitter controller handles packet-arrival variation. The target is not a
+    /// user preference: it continuously converges toward the lowest stable value.
     private func updateClockRecovery() {
         guard isRunning else { return }
 
         let stats = ring.stats()
+        let targetFrames = max(256, ring.targetFrames())
 
-        let targetFrames =
+        let error = Double(stats.bufferedFrames - targetFrames) / Double(targetFrames)
+
+        // A slightly wider dead-zone is calmer at the new low-latency targets.
+        let effectiveError = abs(error) < 0.10 ? 0 : error
+
+        // TimePitch preserves pitch while correcting independent sender/device clocks.
+        let desiredRate = Float(
             max(
-                256,
-                ring.targetFrames()
+                0.98,
+                min(1.02, 1.0 + effectiveError * 0.015)
             )
+        )
 
-        let error =
-            Double(
-                stats.bufferedFrames -
-                targetFrames
-            ) /
-            Double(targetFrames)
-
-        // Dead-zone prevents constant tiny speed changes around target.
-        let effectiveError: Double
-        if abs(error) < 0.08 {
-            effectiveError = 0
-        } else {
-            effectiveError = error
-        }
-
-        // Up to +/-2% when the buffer is badly displaced. Since TimePitch
-        // preserves pitch, this is much less objectionable than Varispeed.
-        let desiredRate =
-            Float(
-                max(
-                    0.98,
-                    min(
-                        1.02,
-                        1.0 + effectiveError * 0.015
-                    )
-                )
-            )
-
-        currentRate =
-            currentRate * 0.82 +
-            desiredRate * 0.18
+        currentRate = currentRate * 0.82 + desiredRate * 0.18
 
         DispatchQueue.main.async { [weak self] in
-            self?.timePitch?.rate =
-                self?.currentRate ?? 1.0
+            self?.timePitch?.rate = self?.currentRate ?? 1.0
         }
 
-        let hadNewUnderflow =
-            stats.underflows !=
-            lastUnderflowCount
+        let hadNewUnderflow = stats.underflows != lastUnderflowCount
+        var allowTargetDecrease = false
 
         if hadNewUnderflow {
-            // Add 50 ms immediately after an underflow. This also
-            // forces a genuine re-prime if the queue is below the new target.
-            adaptiveTargetMS =
-                min(
-                    600,
-                    adaptiveTargetMS + 50
-                )
-
-            ring.setTargetFrames(
-                frames(
-                    forMS:
-                        adaptiveTargetMS
-                )
+            // React quickly to instability. A 25 ms step is large enough to recover
+            // in a few windows without jumping straight to triple-digit latency.
+            adaptiveSafetyMarginMS = min(
+                autoMaximumTargetMS - autoMinimumTargetMS,
+                adaptiveSafetyMarginMS + 25
             )
-
             stableControlWindows = 0
         } else if stats.primed {
             stableControlWindows += 1
 
-            // After 30 s without underflow, slowly move back toward
-            // the user's configured buffer.
-            if stableControlWindows >= 60 &&
-                adaptiveTargetMS >
-                    configuredBufferMS {
-                adaptiveTargetMS =
-                    max(
-                        configuredBufferMS,
-                        adaptiveTargetMS - 10
-                    )
-
-                ring.setTargetFrames(
-                    frames(
-                        forMS:
-                            adaptiveTargetMS
-                    )
-                )
-
+            // Ten seconds of clean playback earns a small latency reduction.
+            if stableControlWindows >= 20 {
+                adaptiveSafetyMarginMS = max(0, adaptiveSafetyMarginMS - 5)
                 stableControlWindows = 0
+                allowTargetDecrease = true
             }
         } else {
             stableControlWindows = 0
         }
 
-        lastUnderflowCount =
-            stats.underflows
+        let measuredBaseMS = automaticMeasuredBaseTargetMS()
+        let desiredTargetMS = min(
+            autoMaximumTargetMS,
+            max(autoMinimumTargetMS, measuredBaseMS + adaptiveSafetyMarginMS)
+        )
 
-        publishDiagnostics()
+        if hadNewUnderflow || desiredTargetMS > adaptiveTargetMS + 1 {
+            adaptiveTargetMS = desiredTargetMS
+            ring.setTargetFrames(
+                frames(forMS: adaptiveTargetMS),
+                forceReprimeIfBelowTarget: hadNewUnderflow
+            )
+        } else if allowTargetDecrease && desiredTargetMS < adaptiveTargetMS - 1 {
+            // Lower in small steps to avoid oscillating around the stability edge.
+            adaptiveTargetMS = max(desiredTargetMS, adaptiveTargetMS - 5)
+            ring.setTargetFrames(
+                frames(forMS: adaptiveTargetMS),
+                forceReprimeIfBelowTarget: false
+            )
+        }
+
+        lastUnderflowCount = stats.underflows
+
+        let diagnosticsRate = currentRate
+        let diagnosticsTargetMS = adaptiveTargetMS
+        networkQueue.async { [weak self] in
+            self?.publishDiagnostics(
+                playbackRate: diagnosticsRate,
+                targetMS: diagnosticsTargetMS
+            )
+        }
+    }
+
+    private func automaticMeasuredBaseTargetMS() -> Double {
+        let metrics = arrivalJitter.withLock { state in
+            (state.smoothedDeviationMS, state.peakDeviationMS)
+        }
+
+        // Four nominal VBAN packets give the decoder/audio thread enough runway on
+        // a clean LAN. Measured deviation then adds only the margin the network needs.
+        let packetMS = VBANPacket.packetDurationSeconds * 1000.0
+        let networkMargin = metrics.0 * 4.0 + metrics.1 * 1.5
+
+        return min(
+            autoMaximumTargetMS,
+            max(autoMinimumTargetMS, packetMS * 4.0 + networkMargin)
+        )
+    }
+
+    private func recordPacketArrival(frame: UInt32, sampleCount: Int) {
+        let now = DispatchTime.now().uptimeNanoseconds
+        let packetMS = Double(sampleCount) / VBANPacket.sampleRate * 1000.0
+
+        arrivalJitter.withLock { state in
+            defer {
+                state.lastArrivalNS = now
+                state.lastFrameCounter = frame
+            }
+
+            guard let previousNS = state.lastArrivalNS,
+                  let previousFrame = state.lastFrameCounter else {
+                return
+            }
+
+            let frameDistance = frame &- previousFrame
+            guard frameDistance > 0, frameDistance < 1_000 else {
+                return
+            }
+
+            let actualMS = Double(now - previousNS) / 1_000_000.0
+            let expectedMS = packetMS * Double(frameDistance)
+            let deviationMS = min(abs(actualMS - expectedMS), 50.0)
+
+            // RFC3550-style smoothing, plus a decaying short-term peak for burst jitter.
+            state.smoothedDeviationMS +=
+                (deviationMS - state.smoothedDeviationMS) / 16.0
+            state.peakDeviationMS = max(
+                deviationMS,
+                state.peakDeviationMS * 0.94
+            )
+        }
     }
 
     private func frames(
@@ -694,85 +750,51 @@ final class VBANReceiver {
         }
 
         lastFrameCounter = frame
-
-        var left = [Float]()
-        var right = [Float]()
-
-        left.reserveCapacity(
-            sampleCount
-        )
-
-        right.reserveCapacity(
-            sampleCount
-        )
+        recordPacketArrival(frame: frame, sampleCount: sampleCount)
 
         var offset = 28
 
-        for _ in 0..<sampleCount {
-            let l =
-                Int16(
-                    bitPattern:
-                        UInt16(
-                            bytes[offset]
-                        ) |
-                        UInt16(
-                            bytes[
-                                offset + 1
-                            ]
-                        ) << 8
-                )
-
+        for index in 0..<sampleCount {
+            let l = Int16(
+                bitPattern:
+                    UInt16(bytes[offset]) |
+                    UInt16(bytes[offset + 1]) << 8
+            )
             offset += 2
 
-            let lv =
-                Float(l) /
-                Float(Int16.max)
+            let leftValue = Float(l) / Float(Int16.max)
+            decodeLeft[index] = leftValue
 
             if channels == 2 {
-                let r =
-                    Int16(
-                        bitPattern:
-                            UInt16(
-                                bytes[
-                                    offset
-                                ]
-                            ) |
-                            UInt16(
-                                bytes[
-                                    offset + 1
-                                ]
-                            ) << 8
-                    )
-
-                offset += 2
-
-                left.append(lv)
-
-                right.append(
-                    Float(r) /
-                    Float(Int16.max)
+                let r = Int16(
+                    bitPattern:
+                        UInt16(bytes[offset]) |
+                        UInt16(bytes[offset + 1]) << 8
                 )
+                offset += 2
+                decodeRight[index] = Float(r) / Float(Int16.max)
             } else {
-                left.append(lv)
-                right.append(lv)
+                decodeRight[index] = leftValue
             }
         }
 
         ring.pushStereo(
-            left: left,
-            right: right
+            left: decodeLeft,
+            right: decodeRight,
+            frameCount: sampleCount
         )
 
         packetsReceived &+= 1
-
-        if packetsReceived % 64 == 0 {
-            publishDiagnostics()
-        }
     }
 
-    private func publishDiagnostics() {
-        let stats =
-            ring.stats()
+    /// Called on networkQueue so packet counters and frame-loss accounting are read
+    /// on the same serial queue that mutates them. Rate/target are captured by the
+    /// control queue and passed by value to avoid cross-queue data races.
+    private func publishDiagnostics(
+        playbackRate: Float,
+        targetMS: Double
+    ) {
+        let stats = ring.stats()
 
         onDiagnostics?(
             packetsReceived,
@@ -781,8 +803,8 @@ final class VBANReceiver {
             stats.bufferedFrames,
             stats.underflows,
             stats.primed,
-            currentRate,
-            adaptiveTargetMS
+            playbackRate,
+            targetMS
         )
     }
 }

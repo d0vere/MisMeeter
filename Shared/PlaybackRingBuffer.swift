@@ -71,9 +71,10 @@ final class PlaybackRingBuffer {
     /// Push interleaved stereo Float32 frames.
     func pushStereo(
         left: [Float],
-        right: [Float]
+        right: [Float],
+        frameCount: Int
     ) {
-        let frames = min(left.count, right.count)
+        let frames = min(frameCount, min(left.count, right.count))
         guard frames > 0 else { return }
 
         lock.withLock { state in

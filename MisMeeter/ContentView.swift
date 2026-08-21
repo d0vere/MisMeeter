@@ -26,15 +26,12 @@ struct ContentView: View {
     @AppStorage("rx1Name") private var rx1Name = "Main"
     @AppStorage("rx1Port") private var rx1Port = "6980"
     @AppStorage("rx1Stream") private var rx1Stream = "PC-Main"
-    @AppStorage("rx1Buffer") private var rx1Buffer = 100.0
     @AppStorage("rx2Name") private var rx2Name = "Aux"
     @AppStorage("rx2Port") private var rx2Port = "6980"
     @AppStorage("rx2Stream") private var rx2Stream = "PC-Aux"
-    @AppStorage("rx2Buffer") private var rx2Buffer = 100.0
     @AppStorage("rx3Name") private var rx3Name = "Other"
     @AppStorage("rx3Port") private var rx3Port = "6980"
     @AppStorage("rx3Stream") private var rx3Stream = "PC-Other"
-    @AppStorage("rx3Buffer") private var rx3Buffer = 100.0
 
     @State private var isStreaming = MisMeeterRuntime.shared.isStreaming
     @State private var isMuted = MisMeeterRuntime.shared.isMuted
@@ -57,7 +54,7 @@ struct ContentView: View {
     @State private var rxUnderflows: UInt64 = 0
     @State private var rxBufferedFrames = 0
     @State private var rxPlaybackRate: Float = 1
-    @State private var rxAdaptiveTargetMS = 100.0
+    @State private var rxAdaptiveTargetMS = 35.0
     @State private var alertMessage: String?
     @State private var selectedTab: AppSection = .transmit
     @FocusState private var isEditingPreset: Bool
@@ -428,14 +425,14 @@ struct ContentView: View {
     private var rxBufferCard: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Label("Receive buffer", systemImage: "waveform.path.ecg")
+                Label("Automatic jitter", systemImage: "waveform.path.ecg")
                     .font(.headline)
                 Spacer()
                 Text("\(Int(rxAdaptiveTargetMS)) ms")
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(.secondary)
             }
-            ProgressView(value: min(max(Double(rxBufferedFrames) / 9600.0, 0), 1))
+            ProgressView(value: min(max(Double(rxBufferedFrames) / max(rxAdaptiveTargetMS * 48.0, 1.0), 0), 1))
             HStack {
                 Text("Clock correction")
                     .foregroundStyle(.secondary)
@@ -455,7 +452,7 @@ struct ContentView: View {
             metric("Packets received", rxPackets.formatted())
             metric("Lost", rxLost.formatted())
             metric("Underflows", rxUnderflows.formatted())
-            metric("Buffered", "\(rxBufferedFrames) frames")
+            metric("Buffered", String(format: "%.1f ms", Double(rxBufferedFrames) / 48.0))
         }
         .padding(18)
         .glassCard()
@@ -536,18 +533,16 @@ struct ContentView: View {
                     .focused($isEditingPreset)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
-                VStack(alignment: .leading) {
-                    HStack {
-                        Text("Jitter buffer")
-                        Spacer()
-                        Text("\(Int(rxBufferBinding.wrappedValue)) ms").foregroundStyle(.secondary)
-                    }
-                    Slider(value: rxBufferBinding, in: 40...600, step: 10)
+                HStack {
+                    Label("Jitter buffer", systemImage: "bolt.horizontal.circle")
+                    Spacer()
+                    Text("Automatic")
+                        .foregroundStyle(.secondary)
                 }
             } header: {
                 Label("Receive preset", systemImage: "speaker.wave.3.fill")
             } footer: {
-                Text("Source configuration used by the Receive Home screen.")
+                Text("Source configuration used by the Receive Home screen. Jitter latency is tuned automatically for the lowest stable delay.")
             }
         }
         .safeAreaPadding(.bottom, 86)
@@ -584,7 +579,7 @@ struct ContentView: View {
                 metric("Packets", rxPackets.formatted())
                 metric("Lost", rxLost.formatted())
                 metric("Underflows", rxUnderflows.formatted())
-                metric("Buffered", "\(rxBufferedFrames) frames")
+                metric("Buffered", String(format: "%.1f ms", Double(rxBufferedFrames) / 48.0))
                 metric("Clock correction", String(format: "%.4fx", rxPlaybackRate))
                 metric("Adaptive target", String(format: "%.0f ms", rxAdaptiveTargetMS))
             }
@@ -751,9 +746,9 @@ struct ContentView: View {
 
     private var currentRXPreset: VBANReceivePreset {
         switch selectedRXPreset {
-        case 1: return VBANReceivePreset(name: rx2Name, port: UInt16(Int(rx2Port) ?? 6980), streamName: rx2Stream, bufferMS: rx2Buffer)
-        case 2: return VBANReceivePreset(name: rx3Name, port: UInt16(Int(rx3Port) ?? 6980), streamName: rx3Stream, bufferMS: rx3Buffer)
-        default: return VBANReceivePreset(name: rx1Name, port: UInt16(Int(rx1Port) ?? 6980), streamName: rx1Stream, bufferMS: rx1Buffer)
+        case 1: return VBANReceivePreset(name: rx2Name, port: UInt16(Int(rx2Port) ?? 6980), streamName: rx2Stream)
+        case 2: return VBANReceivePreset(name: rx3Name, port: UInt16(Int(rx3Port) ?? 6980), streamName: rx3Stream)
+        default: return VBANReceivePreset(name: rx1Name, port: UInt16(Int(rx1Port) ?? 6980), streamName: rx1Stream)
         }
     }
 
@@ -764,7 +759,6 @@ struct ContentView: View {
     private var rxNameBinding: Binding<String> { selectedRXPreset == 1 ? $rx2Name : (selectedRXPreset == 2 ? $rx3Name : $rx1Name) }
     private var rxPortBinding: Binding<String> { selectedRXPreset == 1 ? $rx2Port : (selectedRXPreset == 2 ? $rx3Port : $rx1Port) }
     private var rxStreamBinding: Binding<String> { selectedRXPreset == 1 ? $rx2Stream : (selectedRXPreset == 2 ? $rx3Stream : $rx1Stream) }
-    private var rxBufferBinding: Binding<Double> { selectedRXPreset == 1 ? $rx2Buffer : (selectedRXPreset == 2 ? $rx3Buffer : $rx1Buffer) }
 }
 
 private enum AppSection: String, CaseIterable, Identifiable {

@@ -16,7 +16,7 @@ final class MisMeeterRuntime {
     private var _isReceiveMuted = false
     private var _startedAt: Date?
     private var _preset = VBANPreset(name: "Preset 1", host: "", port: 6980, streamName: "MisMeeter")
-    private var _receivePreset = VBANReceivePreset(name: "Receive", port: 6980, streamName: "MisMeeterRX", bufferMS: 100)
+    private var _receivePreset = VBANReceivePreset(name: "Receive", port: 6980, streamName: "MisMeeterRX")
 
     var onStatusChange: ((String) -> Void)?
     var onMeter: ((Float) -> Void)?
@@ -154,6 +154,7 @@ final class MisMeeterRuntime {
             if _startedAt == nil { _startedAt = Date() }
         }
         publishSharedState(status: isStreaming ? "Duplex live" : "Listening")
+        if isStreaming { NowPlayingRemoteController.shared.syncState() }
         Task { await ensureLiveActivity() }
     }
 
@@ -166,6 +167,7 @@ final class MisMeeterRuntime {
             if !_isStreaming { _startedAt = nil }
         }
         publishSharedState(status: keepAudioSession ? (isMuted ? "Microphone muted" : "Live") : "Ready")
+        if keepAudioSession { NowPlayingRemoteController.shared.syncState() }
         Task { await updateActivityLifecycle() }
     }
 

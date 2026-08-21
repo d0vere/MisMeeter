@@ -1,3 +1,15 @@
+# MisMeeter 3.3.0 — Lock Screen + Auto Jitter
+
+- Migrated Now Playing to `MPNowPlayingSession` with a continuously-running silent `AVQueuePlayer`.
+- Fixed dormant/gray Lock Screen controls after microphone mute by never pausing the physical keep-alive player.
+- Reworked Bluetooth/car suppression from indefinite accessory-availability gating to active-route gating plus a short connection grace window.
+- Added interruption/media-service recovery and Now Playing promotion retries.
+- Removed manual RX jitter settings; target is now measured/adaptive with a 20 ms floor.
+- Removed per-packet RX Float array allocations.
+- Version 3.3.0, build 42.
+
+---
+
 # MisMeeter 3.2.9 — iOS 18.5 UI / Duplex Live Activity
 
 - Deployment target moved to iOS 18.5; custom cards/navigation use an iOS 18.5-compatible ultra-thin Material treatment.

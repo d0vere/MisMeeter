@@ -1,38 +1,98 @@
-## MisMeeter
+# MisMeeter 3.3.0 — Audio-clocked VBAN for iOS
 
-This project builds an iOS unsigned app for real-time VBAN audio transmission and reception over local networks.
+## 3.3.0 — Lock Screen reliability + automatic jitter
 
-It provides quick control of microphone and received audio through the app, widgets, Live Activities, and iOS system controls.
-It was created as a modern alternative to VBAN Talkie, which apparently is no longer updated and lacks integration with many of the latest iOS features.
+- Rebuilt Lock Screen media integration around `AVQueuePlayer` + `MPNowPlayingSession` instead of the process-wide remote command center.
+- The bundled digital-silence player remains physically active while TX is active, including when the microphone is logically muted, preventing iOS from treating the Now Playing session as dormant.
+- Play = microphone unmute, Pause = microphone mute, Previous = RX mute toggle, Next = Stop All. Remote Play never starts a stopped MisMeeter session.
+- Added interruption/media-service recovery and bounded Now Playing activation retries.
+- Bluetooth/car protection now yields for routes actually in use and uses only a short connection grace window instead of disabling controls indefinitely because an accessory is merely available.
+- RX jitter is fully automatic: no preset slider, fast recovery after underflows, measured packet-arrival jitter, and gradual convergence toward the lowest stable latency (20 ms floor).
+- RX decoding reuses packet buffers instead of allocating two Float arrays for every VBAN packet.
 
-> [!WARNING]
-> Every part of this project _HEAVILY_ used LLMs*
+## 3.2.9 system surfaces refinement
 
----
+- Dynamic Island expanded mode no longer shows generic “Live” text. RX and TX each show their own active preset around the physical camera area.
+- Shared transport state now carries independent Send and Receive preset names for WidgetKit and ActivityKit.
+- Widget UI is independent from the Live Activity and shows `TX · preset` / `RX · preset` with status icons aligned on the opposite side.
+- RX/TX action buttons mirror transport state colors: green while active, red while muted; Stop All remains red.
+- Expanded Island indicators are inset away from the camera/sensor cutout to avoid physical occlusion.
 
-Features
-* 🎙 VBAN microphone transmission
-* 🎧 VBAN audio reception
-* 🔇 Independent Mic & RX mute
-* 🔒 Lock Screen media controls
-* 🎛 iOS widgets & system controls
-* 🚗 Bluetooth / Car-safe behavior
 
----
+## 3.2.9 interface refinement
 
-## 🤖 AI-Assisted Development
+- Send status tiles (TX/RX) are positioned above Send Controls.
+- Expanded Dynamic Island keeps the RX speaker and TX microphone anchored toward the sensor, matching their compact visual positions.
+- Home Screen Widget is now a dedicated Send/Receive dashboard instead of mirroring the Live Activity.
+- Widget shows preset, independent RX/TX state and quick controls; Lock Screen accessory widgets remain deliberately compact.
+- Xcode 16.4 / iOS 18.5 compatibility is unchanged.
 
-MisMeeter was created using **AI-assisted code generation**.
-The project has been driven through human-defined requirements, feature design, hardware testing, debugging, validation and repeated iteration, while the source code itself was generated with AI assistance.
-This is disclosed for transparency. AI-generated code may contain bugs, incorrect assumptions, security issues or platform-specific problems, so **code review and contributions from experienced developers are especially welcome**.
+## What changed in 3.0
 
----
+### Lock-screen TX fix
+The critical microphone-to-network path was rebuilt.
 
-# Support
+Previous releases inserted a high-priority GCD worker, semaphore wakeups and an elastic queue between the Core Audio callback and UDP. On a locked iPhone, the microphone callback could remain healthy while the auxiliary worker woke late. That produced packet gaps, queue trimming and audible stutter on the destination.
 
-If you find this useful and would like to support the time,
-hardware testing and experimentation behind the project
+3.0 uses the Core Audio input callback itself as the transmission clock:
 
-☕ [Buy Me a Coffee](https://buymeacoffee.com/dovere)
+`RemoteIO / VoiceProcessingIO -> preallocated PCM conversion -> connected nonblocking UDP -> VBAN`
 
----
+Properties of the new TX path:
+- no timer
+- no DispatchQueue worker
+- no semaphore
+- no catch-up burst
+- no stale PCM queue
+- no allocation per packet
+- synchronous socket validation before capture starts
+- connected IPv4 UDP socket with a large send buffer and `O_NONBLOCK`
+- 48 kHz / mono / Int16 / 256 samples per VBAN packet
+
+The app keeps `UIBackgroundModes = audio` and an active `.playAndRecord` audio session while TX/RX requires it.
+
+### UI / UX rebuild
+The app UI was rebuilt around four system-native areas:
+- **Home** — transmission state, level meter, mute, start/stop and live-surface status
+- **Receive** — a dedicated RX Home with listening state, receive buffer and quality metrics
+- **Presets** — three TX and three RX presets with dedicated editors
+- **Settings** — capture/background controls, gain and integrated Core Audio/VBAN/RX diagnostics monitor
+
+The project is compiled with Xcode 16.4 and the iOS 18.5 SDK. The custom floating navigation and cards use a lightweight ultra-thin Material treatment with subtle borders and shadows, preserving the modern translucent direction without relying on iOS 26-only APIs.
+
+### Duplex Live Activity + Dynamic Island + Widget
+These remain first-class system surfaces in 3.3.0 on iOS 18.5:
+- Lock Screen Live Activity with large RX mute, microphone mute and Stop All controls
+- compact Dynamic Island with RX speaker on the left and TX microphone on the right
+- RX-only and TX-only Live Activity lifecycle support
+- Home Screen small and medium widget with the same three controls
+- Lock Screen accessory circular and rectangular widget
+- shared session state through App Group `group.dev.mismeeter.app`
+- Darwin notification control bridge to the running audio process
+
+For a signed device build, enable the App Group `group.dev.mismeeter.app` for both the main app and the Widget Extension in the Apple Developer portal/provisioning profiles.
+
+### App icon
+A new waveform/glass app icon is included in `MisMeeter/Assets.xcassets/AppIcon.appiconset` together with a 1024px source image.
+
+## GitHub Actions
+`.github/workflows/build-ios.yml` now:
+- uses `macos-15`
+- explicitly selects Xcode 16.4 and verifies the iOS 18.5 SDK
+- installs XcodeGen
+- regenerates the Xcode project
+- validates generated plists and entitlements
+- builds the app and Widget Extension for generic iOS device with signing disabled
+- packages `MisMeeter-3.3.0-unsigned.ipa`
+- uploads the IPA and failure logs
+
+## Local generation
+
+```bash
+brew install xcodegen
+xcodegen generate
+open MisMeeter.xcodeproj
+```
+
+## Device signing note
+The GitHub artifact is intentionally unsigned. For an installable device/App Store build, configure a Development/Distribution team and provisioning profiles that contain the App Group capability for both targets.

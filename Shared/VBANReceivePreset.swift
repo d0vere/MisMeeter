@@ -4,7 +4,6 @@ struct VBANReceivePreset: Equatable {
     var name: String
     var port: UInt16
     var streamName: String
-    var bufferMS: Double
 
     var sanitizedStreamName: String {
         let scalars = streamName.unicodeScalars.filter { $0.isASCII }

@@ -1,34 +1,49 @@
-# MisMeeter 3.3.4 — Native VBAN for iOS
+## MisMeeter
 
-MisMeeter is a native iOS app for real-time **VBAN audio transmission and reception** over local networks. It was created as a modern alternative to **VBAN Talkie**, which is no longer actively updated and lacks integration with current iOS features.
+MisMeeter is a native iOS app for real-time VBAN audio transmission and reception over local networks.
+This project builds an iOS unsigned app for real-time VBAN audio transmission and reception over local networks.
 
-## Features
+It provides quick control of microphone and received audio through the app, widgets, Live Activities, and iOS system controls.
+It was created as a modern alternative to VBAN Talkie, which apparently is no longer updated and lacks integration with many of the latest iOS features.
 
-- VBAN microphone transmission and audio reception
-- Independent Mic and RX mute
-- Live Activity + Dynamic Island status
-- Two native iOS 18 Controls for **Mic** and **RX** on Control Center / Lock Screen
-- Automatic low-latency adaptive receive jitter
-- Native Swift / SwiftUI, local processing, no cloud required
+> [!WARNING]
+> Every part of this project _HEAVILY_ used LLMs*
 
-## 3.3.4
+---
 
-The Dynamic Island is exclusively ActivityKit-driven. In compact mode, **RX** and **TX** are grouped together on the **left side of the camera/sensor area**; the compact trailing region is empty.
+Features
+🎙 VBAN microphone transmission
+🎧 VBAN audio reception
+🔇 Independent Mic & RX mute
+🔒 Lock Screen media controls
+🎛 iOS widgets & system controls
+🚗 Bluetooth / Car-safe behavior
+⚡ Native Swift & SwiftUI
+🔐 Local processing — no cloud required
 
-The two native Controls are stateful and runtime-authoritative:
+Native VBAN audio control for iPhone.
+* 🎙 VBAN microphone transmission
+* 🎧 VBAN audio reception
+* 🔇 Independent Mic & RX mute
+* 🔒 Lock Screen media controls
+* 🎛 iOS widgets & system controls
+* 🚗 Bluetooth / Car-safe behavior
 
-- **MisMeeter Mic** — ON = microphone transmitting, OFF = microphone muted, IDLE = TX inactive
-- **MisMeeter RX** — ON = receive audio audible, OFF = receive audio muted, IDLE = RX inactive
+---
 
-Control actions use exact desired values, `.alwaysAllowed`, and `openAppWhenRun = false`. They never start an inactive transport and never publish speculative state.
+## 🤖 AI-Assisted Development
 
-There is **no MediaPlayer, Now Playing, silent audio, remote media command, or legacy queued TX layer** in the generated Xcode targets.
+MisMeeter was created using **AI-assisted code generation**.
+The project has been driven through human-defined requirements, feature design, hardware testing, debugging, validation and repeated iteration, while the source code itself was generated with AI assistance.
+This is disclosed for transparency. AI-generated code may contain bugs, incorrect assumptions, security issues or platform-specific problems, so **code review and contributions from experienced developers are especially welcome**.
 
-## Requirements
+---
 
-- iOS 18.5+
-- Xcode 16.4+
-- Microphone and Local Network permissions
-- A compatible VBAN endpoint
+# Support
 
-**A modern VBAN audio companion built natively for iOS.**
+If you find this useful and would like to support the time,
+hardware testing and experimentation behind the project
+
+☕ [Buy Me a Coffee](https://buymeacoffee.com/dovere)
+
+---

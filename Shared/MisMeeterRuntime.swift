@@ -67,13 +67,15 @@ final class MisMeeterRuntime {
             self?.onReceiverDiagnostics?(received, rejected, lost, buffered, underflows, primed, rate, targetMS)
         }
 
-        controlObserver.start { [weak self] action in
+        controlObserver.start { [weak self] command in
             guard let self else { return }
-            switch action {
-            case .toggleMicrophoneMute:
-                _ = self.toggleMuted()
-            case .toggleReceiveMute:
-                _ = self.toggleReceiveMuted()
+            switch command.action {
+            case .setMicrophoneMuted:
+                guard let value = command.value else { return }
+                self.setMuted(value)
+            case .setReceiveMuted:
+                guard let value = command.value else { return }
+                self.setReceiveMuted(value)
             case .stopAll:
                 Task { await self.stopAll() }
             }
@@ -124,11 +126,10 @@ final class MisMeeterRuntime {
         if isReceiving { AudioSessionCoordinator.shared.forceSpeaker() }
         publishSharedState(status: isReceiving ? "Duplex live" : "Live")
 
-        // Establish/update the ActivityKit surface first. MPNowPlayingSession promotion is
-        // asynchronous and can otherwise temporarily win Dynamic Island arbitration.
-        // Once Now Playing becomes active it triggers a second Live Activity reassertion.
+        // ActivityKit is the only Dynamic Island / Lock Screen presentation surface.
+        // There is deliberately no MediaPlayer / Now Playing session: that avoids the
+        // duplicate Dynamic Island presentation entirely.
         await ensureLiveActivity()
-        configureNowPlayingControls()
     }
 
     func stop() async {
@@ -145,7 +146,6 @@ final class MisMeeterRuntime {
             _isMuted = false
             if !_isReceiving { _startedAt = nil }
         }
-        NowPlayingRemoteController.shared.deactivate()
         publishSharedState(status: keepAudioSession ? receiveStatusText : "Ready")
         await updateActivityLifecycle()
     }
@@ -159,7 +159,6 @@ final class MisMeeterRuntime {
             if _startedAt == nil { _startedAt = Date() }
         }
         publishSharedState(status: isStreaming ? "Duplex live" : "Listening")
-        if isStreaming { NowPlayingRemoteController.shared.syncState() }
         Task { await ensureLiveActivity() }
     }
 
@@ -172,7 +171,6 @@ final class MisMeeterRuntime {
             if !_isStreaming { _startedAt = nil }
         }
         publishSharedState(status: keepAudioSession ? (isMuted ? "Microphone muted" : "Live") : "Ready")
-        if keepAudioSession { NowPlayingRemoteController.shared.syncState() }
         Task { await updateActivityLifecycle() }
     }
 
@@ -186,7 +184,6 @@ final class MisMeeterRuntime {
         if hadRX {
             receiver.stop(deactivateSession: false)
         }
-        NowPlayingRemoteController.shared.deactivate()
         AudioSessionCoordinator.shared.deactivateIfPossible()
         stateQueue.sync {
             _isStreaming = false
@@ -210,7 +207,6 @@ final class MisMeeterRuntime {
         }
         transmitter.setMuted(value)
         publishSharedState(status: value ? "Microphone muted" : (isReceiving ? "Duplex live" : "Live"))
-        NowPlayingRemoteController.shared.syncState()
         Task { await syncLiveActivity() }
         return value
     }
@@ -220,7 +216,6 @@ final class MisMeeterRuntime {
         stateQueue.sync { _isMuted = value }
         transmitter.setMuted(value)
         publishSharedState(status: value ? "Microphone muted" : (isReceiving ? "Duplex live" : "Live"))
-        NowPlayingRemoteController.shared.syncState()
         Task { await syncLiveActivity() }
     }
 
@@ -230,7 +225,6 @@ final class MisMeeterRuntime {
         let value = receiver.toggleOutputMuted()
         stateQueue.sync { _isReceiveMuted = value }
         publishSharedState(status: value ? "Receive muted" : (isStreaming ? "Duplex live" : "Listening"))
-        NowPlayingRemoteController.shared.syncState()
         Task { await syncLiveActivity() }
         return value
     }
@@ -240,43 +234,7 @@ final class MisMeeterRuntime {
         receiver.setOutputMuted(value)
         stateQueue.sync { _isReceiveMuted = value }
         publishSharedState(status: value ? "Receive muted" : (isStreaming ? "Duplex live" : "Listening"))
-        NowPlayingRemoteController.shared.syncState()
         Task { await syncLiveActivity() }
-    }
-
-    private func configureNowPlayingControls() {
-        NowPlayingRemoteController.shared.activate(
-            isTXActive: { [weak self] in self?.isStreaming ?? false },
-            isRXActive: { [weak self] in self?.isReceiving ?? false },
-            isMicrophoneMuted: { [weak self] in self?.isMuted ?? true },
-            toggleMicrophoneMute: { [weak self] in self?.toggleMuted() ?? false },
-            toggleReceiveMute: { [weak self] in _ = self?.toggleReceiveMuted() },
-            stopAll: { [weak self] in
-                guard let self else { return }
-                Task { await self.stopAll() }
-            },
-            onSessionPromoted: { [weak self] in
-                self?.reassertLiveActivityAfterNowPlayingPromotion()
-            }
-        )
-    }
-
-    /// Re-publishes the Live Activity after iOS promotes the Now Playing session.
-    /// There is no public API to suppress Now Playing only in the Dynamic Island while
-    /// keeping it on the Lock Screen, so this deliberately reasserts our ActivityKit
-    /// presentation after the media-session race has settled. The system still owns
-    /// final Dynamic Island arbitration.
-    private func reassertLiveActivityAfterNowPlayingPromotion() {
-        Task { [weak self] in
-            guard let self, self.isStreaming || self.isReceiving else { return }
-            await self.ensureLiveActivity()
-
-            // A second distinct ActivityKit update catches the short window in which
-            // SpringBoard may finish promoting Now Playing after the first update.
-            try? await Task.sleep(nanoseconds: 450_000_000)
-            guard self.isStreaming || self.isReceiving else { return }
-            await self.syncLiveActivity()
-        }
     }
 
     func beginLockTransition() {

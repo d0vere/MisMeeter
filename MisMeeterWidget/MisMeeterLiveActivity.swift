@@ -11,27 +11,27 @@ struct MisMeeterLiveActivity: Widget {
                 .activitySystemActionForegroundColor(.primary)
         } dynamicIsland: { context in
             DynamicIsland {
-                // Expanded mode deliberately leaves the physical camera/sensor area clear.
-                // RX is kept on the left and TX on the right, with the preset labels growing
-                // outward from their indicators instead of putting content over the camera.
+                // Keep both transport indicators on the leading side of the physical
+                // camera/sensor area. The trailing side is intentionally text-only so
+                // compact mode never places the TX microphone on the right edge.
                 DynamicIslandExpandedRegion(.leading) {
-                    // RX: preset label first, speaker immediately to its right.
-                    // The whole cluster is anchored to the inner edge of the leading region,
-                    // so the speaker stays next to the physical island instead of drifting outward.
-                    HStack(spacing: 4) {
-                        Text(context.state.receivePresetLabel)
-                            .font(.caption2.weight(.semibold))
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.62)
-                            .allowsTightening(true)
+                    HStack(spacing: 8) {
+                        expandedTransportBadge(
+                            prefix: "RX",
+                            systemImage: context.state.isReceiveMuted ? "speaker.slash.fill" : "speaker.wave.2.fill",
+                            active: context.state.isReceiving,
+                            muted: context.state.isReceiveMuted
+                        )
 
-                        if context.state.isReceiving {
-                            receiveIndicator(context.state)
-                                .fixedSize()
-                                .accessibilityLabel(context.state.isReceiveMuted ? "Receive audio muted" : "Receive audio active")
-                        }
+                        expandedTransportBadge(
+                            prefix: "TX",
+                            systemImage: context.state.isMuted ? "mic.slash.fill" : "mic.fill",
+                            active: context.state.isStreaming,
+                            muted: context.state.isMuted
+                        )
                     }
                     .frame(maxWidth: .infinity, alignment: .trailing)
+                    .accessibilityElement(children: .combine)
                 }
 
                 DynamicIslandExpandedRegion(.center) {
@@ -41,17 +41,16 @@ struct MisMeeterLiveActivity: Widget {
                 }
 
                 DynamicIslandExpandedRegion(.trailing) {
-                    HStack(spacing: 4) {
-                        if context.state.isStreaming {
-                            microphoneIndicator(context.state)
-                                .fixedSize()
-                                .accessibilityLabel(context.state.isMuted ? "Microphone muted" : "Microphone active")
-                        }
-                        Text(context.state.sendPresetLabel)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(context.state.statusLabel)
                             .font(.caption2.weight(.semibold))
                             .lineLimit(1)
+                            .minimumScaleFactor(0.72)
+                        Text(context.state.sendPresetLabel)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
                             .minimumScaleFactor(0.68)
-                            .allowsTightening(true)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
@@ -90,34 +89,22 @@ struct MisMeeterLiveActivity: Widget {
                     .padding(.top, 4)
                 }
             } compactLeading: {
-                if context.state.isReceiving {
-                    compactIndicator(
-                        systemImage: context.state.isReceiveMuted ? "speaker.slash.fill" : "speaker.wave.2.fill",
-                        muted: context.state.isReceiveMuted
-                    )
+                compactTransportPair(context.state)
                     .padding(.leading, 1)
-                    .accessibilityLabel(context.state.isReceiveMuted ? "Receive audio muted" : "Receive audio active")
-                }
+                    .accessibilityLabel(compactAccessibilityLabel(context.state))
             } compactTrailing: {
-                if context.state.isStreaming {
-                    compactIndicator(
-                        systemImage: context.state.isMuted ? "mic.slash.fill" : "mic.fill",
-                        muted: context.state.isMuted
-                    )
-                    // Reserve a little trailing breathing room: wide slash variants can
-                    // otherwise touch SpringBoard's compact-region clipping boundary.
-                    .padding(.trailing, 3)
-                    .accessibilityLabel(context.state.isMuted ? "Microphone muted" : "Microphone active")
-                }
+                EmptyView()
             } minimal: {
                 if context.state.isStreaming {
                     compactIndicator(
                         systemImage: context.state.isMuted ? "mic.slash.fill" : "mic.fill",
+                        active: true,
                         muted: context.state.isMuted
                     )
                 } else {
                     compactIndicator(
                         systemImage: context.state.isReceiveMuted ? "speaker.slash.fill" : "speaker.wave.2.fill",
+                        active: context.state.isReceiving,
                         muted: context.state.isReceiveMuted
                     )
                 }
@@ -127,32 +114,50 @@ struct MisMeeterLiveActivity: Widget {
     }
 
     @ViewBuilder
-    private func receiveIndicator(_ state: MicActivityAttributes.ContentState) -> some View {
-        Image(systemName: state.isReceiveMuted ? "speaker.slash.fill" : "speaker.wave.2.fill")
-            .font(.caption.weight(.bold))
-            .foregroundStyle(state.isReceiveMuted ? .red : .green)
-    }
-
-    @ViewBuilder
-    private func microphoneIndicator(_ state: MicActivityAttributes.ContentState) -> some View {
-        Image(systemName: state.isMuted ? "mic.slash.fill" : "mic.fill")
-            .font(.caption.weight(.bold))
-            .frame(width: 18, height: 18, alignment: .center)
-            .foregroundStyle(state.isMuted ? .red : .green)
-    }
-
-    @ViewBuilder
-    private func compactIndicator(systemImage: String, muted: Bool) -> some View {
-        ZStack {
-            Color.clear
-                .frame(width: 20, height: 20)
-            Image(systemName: systemImage)
+    private func expandedTransportBadge(prefix: String, systemImage: String, active: Bool, muted: Bool) -> some View {
+        HStack(spacing: 3) {
+            Text(prefix)
                 .font(.caption2.weight(.bold))
+            Image(systemName: systemImage)
+                .font(.caption.weight(.bold))
                 .symbolRenderingMode(.monochrome)
-                .foregroundStyle(muted ? .red : .green)
-                .frame(width: 16, height: 16, alignment: .center)
         }
-        .frame(width: 20, height: 20)
+        .foregroundStyle(active ? (muted ? Color.red : Color.green) : Color.secondary)
+        .opacity(active ? 1.0 : 0.48)
+        .fixedSize()
+    }
+
+    @ViewBuilder
+    private func compactTransportPair(_ state: MicActivityAttributes.ContentState) -> some View {
+        HStack(spacing: 2) {
+            compactIndicator(
+                systemImage: state.isReceiveMuted ? "speaker.slash.fill" : "speaker.wave.2.fill",
+                active: state.isReceiving,
+                muted: state.isReceiveMuted
+            )
+            compactIndicator(
+                systemImage: state.isMuted ? "mic.slash.fill" : "mic.fill",
+                active: state.isStreaming,
+                muted: state.isMuted
+            )
+        }
+        .fixedSize(horizontal: true, vertical: true)
+    }
+
+    @ViewBuilder
+    private func compactIndicator(systemImage: String, active: Bool, muted: Bool) -> some View {
+        Image(systemName: systemImage)
+            .font(.system(size: 10.5, weight: .bold))
+            .symbolRenderingMode(.monochrome)
+            .foregroundStyle(active ? (muted ? Color.red : Color.green) : Color.secondary)
+            .opacity(active ? 1.0 : 0.45)
+            .frame(width: 13, height: 18, alignment: .center)
+    }
+
+    private func compactAccessibilityLabel(_ state: MicActivityAttributes.ContentState) -> String {
+        let rx = state.isReceiving ? (state.isReceiveMuted ? "RX muted" : "RX active") : "RX idle"
+        let tx = state.isStreaming ? (state.isMuted ? "TX muted" : "TX active") : "TX idle"
+        return "\(rx), \(tx)"
     }
 
     private func transportTint(active: Bool, muted: Bool) -> Color {

@@ -1,6 +1,8 @@
-import ActivityKit
 import AppIntents
+import WidgetKit
 
+/// Live Activity toggle that derives the requested value from the latest shared
+/// runtime snapshot and waits for the runtime to publish the applied state.
 struct ToggleMuteIntent: LiveActivityIntent {
     static var title: LocalizedStringResource = "Toggle Microphone"
     static var description = IntentDescription("Mute or unmute the active MisMeeter microphone transmission.")
@@ -8,17 +10,17 @@ struct ToggleMuteIntent: LiveActivityIntent {
     static var authenticationPolicy: IntentAuthenticationPolicy = .alwaysAllowed
 
     func perform() async throws -> some IntentResult {
-        var snapshot = SharedAppState.readSnapshot()
+        let snapshot = SharedAppState.readSnapshot()
         guard snapshot.isStreaming else { return .result() }
 
-        snapshot.isMuted.toggle()
-        snapshot.status = snapshot.isMuted ? "Microphone muted" : (snapshot.isReceiving ? "Duplex live" : "Live")
-        SharedAppState.writeSnapshot(snapshot)
-        SharedAppState.issue(.toggleMicrophoneMute)
+        let desiredMuted = !snapshot.isMuted
+        SharedAppState.issue(.setMicrophoneMuted, value: desiredMuted)
+        await SharedAppState.waitForSnapshot(timeoutMilliseconds: 650) { updated in
+            updated.isStreaming && updated.isMuted == desiredMuted
+        }
 
-        let state = MicActivityAttributes.ContentState(snapshot: snapshot)
-        for activity in Activity<MicActivityAttributes>.activities {
-            await activity.update(ActivityContent(state: state, staleDate: nil))
+        if #available(iOS 18.0, *) {
+            ControlCenter.shared.reloadControls(ofKind: SharedAppState.ControlKinds.microphone)
         }
         return .result()
     }

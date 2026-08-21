@@ -68,17 +68,38 @@ struct SharedTransportSnapshot: Codable, Hashable {
 }
 
 enum SharedControlAction: Int, Codable {
-    case toggleMicrophoneMute = 1
+    /// The command carries the exact desired mute value. This is intentionally
+    /// not a blind toggle: Control Center can render from stale state and a
+    /// toggle-at-receipt would invert the wrong value.
+    case setMicrophoneMuted = 1
     case stopAll = 2
-    case toggleReceiveMute = 3
+    case setReceiveMuted = 3
+}
+
+struct SharedControlCommand: Codable, Hashable {
+    let id: String
+    let action: SharedControlAction
+    let value: Bool?
+
+    init(action: SharedControlAction, value: Bool? = nil) {
+        self.id = UUID().uuidString
+        self.action = action
+        self.value = value
+    }
 }
 
 enum SharedAppState {
     static let appGroup = "group.dev.mismeeter.app"
-    static let controlNotification = "dev.mismeeter.app.control"
+    static let controlNotification = "dev.mismeeter.app.control.v5"
+
+    enum ControlKinds {
+        static let receive = "dev.mismeeter.app.control.receiveMute"
+        static let microphone = "dev.mismeeter.app.control.microphoneMute"
+        static let stopAll = "dev.mismeeter.app.control.stopAll"
+    }
+
     private static let snapshotKey = "transport.snapshot.v4"
-    private static let actionKey = "control.action.v4"
-    private static let actionIDKey = "control.action.id.v4"
+    private static let commandKey = "control.command.v5"
 
     private static var defaults: UserDefaults {
         UserDefaults(suiteName: appGroup) ?? .standard
@@ -92,20 +113,41 @@ enum SharedAppState {
     }
 
     static func writeSnapshot(_ value: SharedTransportSnapshot, reloadWidgets: Bool = true) {
+        let previous = readSnapshot()
+
         if let data = try? JSONEncoder().encode(value) {
             defaults.set(data, forKey: snapshotKey)
         }
-        if reloadWidgets {
-            #if canImport(WidgetKit)
-            WidgetCenter.shared.reloadAllTimelines()
-            #endif
+
+        guard reloadWidgets else { return }
+
+        #if canImport(WidgetKit)
+        WidgetCenter.shared.reloadAllTimelines()
+
+        if #available(iOS 18.0, *) {
+            // Controls don't automatically refresh when state is changed from
+            // the app or Live Activity. Reload only the controls whose rendered
+            // value can have changed.
+            if previous.isStreaming != value.isStreaming || previous.isMuted != value.isMuted {
+                ControlCenter.shared.reloadControls(ofKind: ControlKinds.microphone)
+            }
+            if previous.isReceiving != value.isReceiving || previous.isReceiveMuted != value.isReceiveMuted {
+                ControlCenter.shared.reloadControls(ofKind: ControlKinds.receive)
+            }
+            if previous.isStreaming != value.isStreaming || previous.isReceiving != value.isReceiving {
+                ControlCenter.shared.reloadControls(ofKind: ControlKinds.stopAll)
+            }
         }
+        #endif
     }
 
-    static func issue(_ action: SharedControlAction) {
-        defaults.set(action.rawValue, forKey: actionKey)
-        defaults.set(UUID().uuidString, forKey: actionIDKey)
+    static func issue(_ action: SharedControlAction, value: Bool? = nil) {
+        let command = SharedControlCommand(action: action, value: value)
+        if let data = try? JSONEncoder().encode(command) {
+            defaults.set(data, forKey: commandKey)
+        }
         defaults.synchronize()
+
         CFNotificationCenterPostNotification(
             CFNotificationCenterGetDarwinNotifyCenter(),
             CFNotificationName(controlNotification as CFString),
@@ -115,33 +157,57 @@ enum SharedAppState {
         )
     }
 
-    static func pendingAction() -> (id: String, action: SharedControlAction)? {
-        guard let id = defaults.string(forKey: actionIDKey),
-              let action = SharedControlAction(rawValue: defaults.integer(forKey: actionKey))
-        else { return nil }
-        return (id, action)
+    static func pendingCommand() -> SharedControlCommand? {
+        guard let data = defaults.data(forKey: commandKey) else { return nil }
+        return try? JSONDecoder().decode(SharedControlCommand.self, from: data)
+    }
+
+    /// Polls the runtime-owned shared snapshot for a short acknowledgement window.
+    /// Controls use this after issuing an exact command so their rendered state is
+    /// derived from what the audio engine actually applied, not from optimistic UI.
+    @discardableResult
+    static func waitForSnapshot(
+        timeoutMilliseconds: Int,
+        pollMilliseconds: Int = 50,
+        until predicate: (SharedTransportSnapshot) -> Bool
+    ) async -> Bool {
+        let safeTimeout = max(0, timeoutMilliseconds)
+        let safePoll = max(20, pollMilliseconds)
+        let deadline = Date().addingTimeInterval(Double(safeTimeout) / 1_000.0)
+
+        repeat {
+            if predicate(readSnapshot()) { return true }
+            if Date() >= deadline { break }
+            try? await Task.sleep(nanoseconds: UInt64(safePoll) * 1_000_000)
+        } while !Task.isCancelled
+
+        return predicate(readSnapshot())
     }
 }
 
 final class SharedControlObserver {
-    private var lastActionID: String?
-    private var handler: ((SharedControlAction) -> Void)?
+    private var lastCommandID: String?
+    private var handler: ((SharedControlCommand) -> Void)?
 
-    func start(handler: @escaping (SharedControlAction) -> Void) {
+    func start(handler: @escaping (SharedControlCommand) -> Void) {
         self.handler = handler
+
+        // Never replay a command left over from a previous process lifetime.
+        // Commands are for controlling an already-running audio runtime.
+        lastCommandID = SharedAppState.pendingCommand()?.id
+
         CFNotificationCenterAddObserver(
             CFNotificationCenterGetDarwinNotifyCenter(),
             Unmanaged.passUnretained(self).toOpaque(),
             { _, observer, _, _, _ in
                 guard let observer else { return }
                 let object = Unmanaged<SharedControlObserver>.fromOpaque(observer).takeUnretainedValue()
-                object.consumePendingAction()
+                object.consumePendingCommand()
             },
             SharedAppState.controlNotification as CFString,
             nil,
             .deliverImmediately
         )
-        consumePendingAction()
     }
 
     func stop() {
@@ -153,10 +219,10 @@ final class SharedControlObserver {
         )
     }
 
-    private func consumePendingAction() {
-        guard let pending = SharedAppState.pendingAction(), pending.id != lastActionID else { return }
-        lastActionID = pending.id
-        handler?(pending.action)
+    private func consumePendingCommand() {
+        guard let pending = SharedAppState.pendingCommand(), pending.id != lastCommandID else { return }
+        lastCommandID = pending.id
+        handler?(pending)
     }
 
     deinit { stop() }

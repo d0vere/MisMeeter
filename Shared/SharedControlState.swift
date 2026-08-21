@@ -4,46 +4,55 @@ import os
 import WidgetKit
 #endif
 
-/// Minimal state used exclusively by iOS system Controls.
+/// Authoritative presentation state for the two iOS system Controls.
 ///
-/// A ControlWidgetToggle needs exactly one authoritative Boolean. v4 therefore
-/// persists only the two mute bits plus ordering metadata. Transport running/idle
-/// status, preset metadata and ActivityKit state cannot influence the toggle value.
-/// The app is the only writer; the widget extension performs atomic reads only.
+/// v4.0.1 stores both transport liveness and mute state. The mute Bool remains the
+/// value driven by ControlWidgetToggle; the active Bool is presentation metadata so
+/// Control Center can distinguish ACTIVE from IDLE after state changes originating
+/// from the app, widgets, Live Activity, start/stop, or process teardown.
 struct SharedControlState: Codable, Equatable, Sendable {
+    var txActive: Bool
     var txMuted: Bool
+    var rxActive: Bool
     var rxMuted: Bool
     var revision: UInt64
     var publishedAt: Date
 
     static let idle = SharedControlState(
+        txActive: false,
         txMuted: false,
+        rxActive: false,
         rxMuted: false,
         revision: 0,
         publishedAt: .distantPast
     )
+
+    /// Never expose a logically impossible highlighted mute state for an inactive
+    /// transport, even if a future migration reads malformed or partial data.
+    var normalized: SharedControlState {
+        var value = self
+        if !value.txActive { value.txMuted = false }
+        if !value.rxActive { value.rxMuted = false }
+        return value
+    }
 }
 
 enum SharedControlStateStore {
     static let appGroup = SharedAppState.appGroup
 
-    /// New kinds intentionally reset the Control Center registration for v4.
-    /// iOS caches control templates by kind; a major-release kind avoids carrying
-    /// stale 3.x state/template archives into the rebuilt implementation.
+    /// Keep the v4 kinds stable so existing Control Center placements survive the
+    /// 4.0.0 -> 4.0.1 update. Only the state schema changes.
     enum Kinds {
         static let receive = "dev.mismeeter.app.control.v4.receiveMute"
         static let microphone = "dev.mismeeter.app.control.v4.microphoneMute"
     }
 
-    private static let filename = "control-state-v4.json"
+    private static let filename = "control-state-v4.0.1.json"
 
     private struct WriterState: Sendable {
         var lastRevision: UInt64 = 0
     }
 
-    /// Serializes app-process writes and rejects an older publication that happens
-    /// to finish after a newer one. Widget processes have their own lock instance,
-    /// but never write this file.
     private static let writerLock = OSAllocatedUnfairLock(
         initialState: WriterState()
     )
@@ -61,18 +70,22 @@ enum SharedControlStateStore {
         else {
             return .idle
         }
-        return state
+        return state.normalized
     }
 
-    static func write(_ state: SharedControlState) {
+    /// Writes the state atomically and returns whether the new state became the
+    /// authoritative on-disk value. A reload is only requested after a successful
+    /// publication so the extension can never be asked to render half-written data.
+    @discardableResult
+    static func write(_ state: SharedControlState) -> Bool {
         guard let url = stateURL,
-              let data = try? JSONEncoder().encode(state)
+              let data = try? JSONEncoder().encode(state.normalized)
         else {
-            return
+            return false
         }
 
-        writerLock.withLock { writer in
-            guard state.revision >= writer.lastRevision else { return }
+        return writerLock.withLock { writer in
+            guard state.revision >= writer.lastRevision else { return false }
 
             do {
                 try data.write(
@@ -84,23 +97,36 @@ enum SharedControlStateStore {
                     ofItemAtPath: url.path
                 )
                 writer.lastRevision = state.revision
+                return true
             } catch {
-                // Keep the previous valid atomic file. The next runtime publication
-                // retries automatically; never replace good state with partial data.
+                // Preserve the last complete state. The next runtime state mutation
+                // republishes automatically.
+                return false
             }
         }
     }
 
     #if canImport(WidgetKit)
-    static func reloadMicrophoneControl() {
+    /// External state changes (app UI, Live Activity, widget, start/stop) must ask
+    /// Control Center to reload. Apple documents this as the supported mechanism
+    /// for reflecting app-originated state changes in configured controls.
+    ///
+    /// The two MisMeeter controls are intentionally reloaded together. Their state
+    /// is one atomic snapshot, and keeping them on the same revision eliminates
+    /// cross-control visual skew at negligible cost.
+    static func reloadAllControls() {
         guard #available(iOS 18.0, *) else { return }
-        ControlCenter.shared.reloadControls(ofKind: Kinds.microphone)
-    }
 
-    static func reloadReceiveControl() {
-        guard #available(iOS 18.0, *) else { return }
-        ControlCenter.shared.reloadControls(ofKind: Kinds.receive)
+        if Thread.isMainThread {
+            ControlCenter.shared.reloadAllControls()
+        } else {
+            // Make the reload request part of the completed state transaction. This
+            // matters for short-lived AppIntent executions that may be suspended as
+            // soon as perform() returns.
+            DispatchQueue.main.sync {
+                ControlCenter.shared.reloadAllControls()
+            }
+        }
     }
-
     #endif
 }

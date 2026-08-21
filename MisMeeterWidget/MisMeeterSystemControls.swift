@@ -2,37 +2,44 @@ import AppIntents
 import SwiftUI
 import WidgetKit
 
-/// MisMeeter v4 deliberately models each system Control as one Boolean: MUTE.
-/// This mirrors Apple's WWDC24 ControlWidgetToggle example as closely as possible.
-///
-/// - `false` = audio path is not muted (normal symbol, neutral system appearance)
-/// - `true`  = mute is engaged (red tint, slashed symbol, highlighted toggle)
-///
-/// Transport running/idle metadata is intentionally not part of the toggle value.
-/// A stale transport-status callback must never be able to freeze or invert a mute
-/// control. The authoritative mute value is published synchronously by the app to
-/// the dedicated App Group control-state file before the SetValueIntent returns.
+/// Presentation value used by Control Center. `isMuted` is the actual toggle value;
+/// `isActive` only selects the state label/symbol so ACTIVE and IDLE are visually
+/// distinguishable without changing SetValueIntent semantics.
+struct MuteControlPresentationValue: Sendable {
+    let isActive: Bool
+    let isMuted: Bool
+}
+
 @available(iOSApplicationExtension 18.0, *)
 struct MisMeeterMicrophoneMuteControl: ControlWidget {
     var body: some ControlWidgetConfiguration {
         StaticControlConfiguration(
             kind: SharedControlStateStore.Kinds.microphone,
             provider: Provider()
-        ) { isMuted in
+        ) { state in
             ControlWidgetToggle(
                 "MisMeeter TX",
-                isOn: isMuted,
+                isOn: state.isMuted,
                 action: SetMicrophoneMuteControlIntent()
-            ) { newValue in
+            ) { requestedValue in
+                let muted = state.isActive && requestedValue
                 Label(
-                    newValue ? "TX MUTED" : "TX AUDIO",
-                    systemImage: newValue ? "mic.slash.fill" : "mic.fill"
+                    state.isActive ? (muted ? "TX MUTED" : "TX ACTIVE") : "TX IDLE",
+                    systemImage: txSymbol(active: state.isActive, muted: muted)
                 )
-                .controlWidgetStatus(newValue ? "TX microphone muted" : "TX microphone unmuted")
-                .controlWidgetActionHint(newValue ? "Unmute TX" : "Mute TX")
+                .controlWidgetStatus(
+                    state.isActive
+                        ? (muted ? "TX microphone muted" : "TX microphone active")
+                        : "TX is not running"
+                )
+                .controlWidgetActionHint(
+                    state.isActive
+                        ? (muted ? "Unmute TX" : "Mute TX")
+                        : "No active TX session"
+                )
             }
-            // ON == muted. The system highlights the ON state using this tint,
-            // matching the visual language of iOS's own mute/silent controls.
+            // ON == muted, matching the system visual language used by mute/silent
+            // controls. ACTIVE-unmuted is distinguished from IDLE by its filled icon.
             .tint(.red)
         }
         .displayName("MisMeeter TX Mute")
@@ -40,11 +47,20 @@ struct MisMeeterMicrophoneMuteControl: ControlWidget {
     }
 
     struct Provider: ControlValueProvider {
-        let previewValue = false
+        let previewValue = MuteControlPresentationValue(isActive: true, isMuted: false)
 
-        func currentValue() async throws -> Bool {
-            SharedControlStateStore.read().txMuted
+        func currentValue() async throws -> MuteControlPresentationValue {
+            let state = SharedControlStateStore.read()
+            return MuteControlPresentationValue(
+                isActive: state.txActive,
+                isMuted: state.txActive && state.txMuted
+            )
         }
+    }
+
+    private func txSymbol(active: Bool, muted: Bool) -> String {
+        guard active else { return "mic" }
+        return muted ? "mic.slash.fill" : "mic.fill"
     }
 }
 
@@ -54,18 +70,27 @@ struct MisMeeterReceiveMuteControl: ControlWidget {
         StaticControlConfiguration(
             kind: SharedControlStateStore.Kinds.receive,
             provider: Provider()
-        ) { isMuted in
+        ) { state in
             ControlWidgetToggle(
                 "MisMeeter RX",
-                isOn: isMuted,
+                isOn: state.isMuted,
                 action: SetReceiveMuteControlIntent()
-            ) { newValue in
+            ) { requestedValue in
+                let muted = state.isActive && requestedValue
                 Label(
-                    newValue ? "RX MUTED" : "RX AUDIO",
-                    systemImage: newValue ? "speaker.slash.fill" : "speaker.wave.3.fill"
+                    state.isActive ? (muted ? "RX MUTED" : "RX ACTIVE") : "RX IDLE",
+                    systemImage: rxSymbol(active: state.isActive, muted: muted)
                 )
-                .controlWidgetStatus(newValue ? "RX audio muted" : "RX audio unmuted")
-                .controlWidgetActionHint(newValue ? "Unmute RX" : "Mute RX")
+                .controlWidgetStatus(
+                    state.isActive
+                        ? (muted ? "RX audio muted" : "RX audio active")
+                        : "RX is not running"
+                )
+                .controlWidgetActionHint(
+                    state.isActive
+                        ? (muted ? "Unmute RX" : "Mute RX")
+                        : "No active RX session"
+                )
             }
             .tint(.red)
         }
@@ -74,10 +99,19 @@ struct MisMeeterReceiveMuteControl: ControlWidget {
     }
 
     struct Provider: ControlValueProvider {
-        let previewValue = false
+        let previewValue = MuteControlPresentationValue(isActive: true, isMuted: false)
 
-        func currentValue() async throws -> Bool {
-            SharedControlStateStore.read().rxMuted
+        func currentValue() async throws -> MuteControlPresentationValue {
+            let state = SharedControlStateStore.read()
+            return MuteControlPresentationValue(
+                isActive: state.rxActive,
+                isMuted: state.rxActive && state.rxMuted
+            )
         }
+    }
+
+    private func rxSymbol(active: Bool, muted: Bool) -> String {
+        guard active else { return "speaker" }
+        return muted ? "speaker.slash.fill" : "speaker.wave.3.fill"
     }
 }

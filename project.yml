@@ -37,6 +37,7 @@ targets:
       - path: Shared/MisMeeterRuntime.swift
       - path: Shared/PlaybackRingBuffer.swift
       - path: Shared/SharedAppState.swift
+      - path: Shared/SharedControlState.swift
       - path: Shared/SetMicrophoneMuteControlIntent.swift
       - path: Shared/SetReceiveMuteControlIntent.swift
       - path: Shared/ToggleMuteIntent.swift
@@ -57,8 +58,8 @@ targets:
         CFBundleInfoDictionaryVersion: "6.0"
         CFBundleName: $(PRODUCT_NAME)
         CFBundlePackageType: APPL
-        CFBundleShortVersionString: "3.3.9"
-        CFBundleVersion: "51"
+        CFBundleShortVersionString: "4.0.0"
+        CFBundleVersion: "100"
         LSRequiresIPhoneOS: true
         NSSupportsLiveActivities: true
         NSMicrophoneUsageDescription: "MisMeeter uses the iPhone microphone to transmit live audio to your VBAN destination."
@@ -96,6 +97,7 @@ targets:
       - path: MisMeeterWidget/MisMeeterWidgetBundle.swift
       - path: Shared/MicActivityAttributes.swift
       - path: Shared/SharedAppState.swift
+      - path: Shared/SharedControlState.swift
       - path: Shared/SetMicrophoneMuteControlIntent.swift
       - path: Shared/SetReceiveMuteControlIntent.swift
       - path: Shared/ToggleMuteIntent.swift
@@ -110,8 +112,8 @@ targets:
         CFBundleInfoDictionaryVersion: "6.0"
         CFBundleName: $(PRODUCT_NAME)
         CFBundlePackageType: XPC!
-        CFBundleShortVersionString: "3.3.9"
-        CFBundleVersion: "51"
+        CFBundleShortVersionString: "4.0.0"
+        CFBundleVersion: "100"
         NSExtension:
           NSExtensionPointIdentifier: com.apple.widgetkit-extension
     settings:

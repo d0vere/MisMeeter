@@ -1,4 +1,5 @@
 import Foundation
+import os
 #if canImport(WidgetKit)
 import WidgetKit
 #endif
@@ -15,8 +16,7 @@ struct SharedTransportSnapshot: Codable, Hashable, Sendable {
     var streamName = "MisMeeter"
     var startedAt: Date?
     var status = "Ready"
-    /// Wall-clock publication time used only to choose the freshest cross-process
-    /// copy when the App Group file and UserDefaults cache momentarily disagree.
+    /// Wall-clock publication time for diagnostics and stale-state inspection.
     var publishedAt: Date?
 
     static let idle = SharedTransportSnapshot()
@@ -75,19 +75,18 @@ struct SharedTransportSnapshot: Codable, Hashable, Sendable {
 enum SharedAppState {
     static let appGroup = "group.dev.mismeeter.app"
 
-    enum ControlKinds {
-        // Keep the existing kinds so users don't need to remove/re-add their controls.
-        static let receive = "dev.mismeeter.app.control.receiveMute"
-        static let microphone = "dev.mismeeter.app.control.microphoneMute"
+    /// v4 uses one authoritative App Group file. Previous releases mirrored the
+    /// same snapshot through both a file and UserDefaults, which created a genuine
+    /// split-brain failure mode when the two caches advanced at different times.
+    private static let snapshotFilename = "transport-state-v4.json"
+
+    private struct WriterState: Sendable {
+        var writes: UInt64 = 0
     }
 
-    // v8 deliberately ignores any stale v7 file left by 3.3.7.
-    private static let snapshotKey = "transport.snapshot.v8"
-    private static let snapshotFilename = "transport-snapshot-v8.json"
-
-    private static var defaults: UserDefaults? {
-        UserDefaults(suiteName: appGroup)
-    }
+    private static let writerLock = OSAllocatedUnfairLock(
+        initialState: WriterState()
+    )
 
     private static var snapshotURL: URL? {
         FileManager.default
@@ -95,47 +94,27 @@ enum SharedAppState {
             .appendingPathComponent(snapshotFilename, isDirectory: false)
     }
 
-    private static func decodeSnapshot(_ data: Data?) -> SharedTransportSnapshot? {
-        guard let data else { return nil }
-        return try? JSONDecoder().decode(SharedTransportSnapshot.self, from: data)
-    }
-
-    /// Reads both App Group transports and chooses the newest valid copy.
-    ///
-    /// 3.3.7 always preferred the file whenever it could be decoded. If an atomic
-    /// file replacement failed once, an old IDLE file could permanently shadow a
-    /// newer UserDefaults snapshot. That is exactly the split-brain state visible
-    /// when the Live Activity says RX is running but Control Center says it isn't.
     static func readSnapshot() -> SharedTransportSnapshot {
-        let fileValue: SharedTransportSnapshot? = {
-            guard let url = snapshotURL else { return nil }
-            return decodeSnapshot(try? Data(contentsOf: url))
-        }()
-
-        defaults?.synchronize()
-        let defaultsValue = decodeSnapshot(defaults?.data(forKey: snapshotKey))
-
-        switch (fileValue, defaultsValue) {
-        case let (file?, cached?):
-            let fileDate = file.publishedAt ?? .distantPast
-            let cachedDate = cached.publishedAt ?? .distantPast
-            return fileDate >= cachedDate ? file : cached
-        case let (file?, nil):
-            return file
-        case let (nil, cached?):
-            return cached
-        case (nil, nil):
+        guard let url = snapshotURL,
+              let data = try? Data(contentsOf: url),
+              let snapshot = try? JSONDecoder().decode(SharedTransportSnapshot.self, from: data)
+        else {
             return .idle
         }
+        return snapshot
     }
 
     static func writeSnapshot(_ value: SharedTransportSnapshot, reloadWidgets: Bool = true) {
         var published = value
         published.publishedAt = Date()
 
-        guard let data = try? JSONEncoder().encode(published) else { return }
+        guard let url = snapshotURL,
+              let data = try? JSONEncoder().encode(published)
+        else {
+            return
+        }
 
-        if let url = snapshotURL {
+        writerLock.withLock { writer in
             do {
                 try data.write(
                     to: url,
@@ -145,25 +124,20 @@ enum SharedAppState {
                     [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication],
                     ofItemAtPath: url.path
                 )
+                writer.writes &+= 1
             } catch {
-                // UserDefaults is a second independent App Group transport below.
+                // An atomic write failure leaves the last complete snapshot intact.
             }
         }
-
-        defaults?.set(data, forKey: snapshotKey)
-        defaults?.synchronize()
 
         guard reloadWidgets else { return }
 
         #if canImport(WidgetKit)
+        // Control Center is intentionally NOT reloaded here. A Control interaction
+        // is automatically reloaded by iOS after its AppIntent returns; triggering
+        // another reload mid-intent races that lifecycle. Runtime-originated control
+        // changes reload the specific control through SharedControlStateStore.
         WidgetCenter.shared.reloadAllTimelines()
-        if #available(iOS 18.0, *) {
-            // Only two controls exist; unconditional reload is intentional. It avoids
-            // suppressing a refresh because a stale prior cross-process copy happened
-            // to compare equal to the newly-published state.
-            ControlCenter.shared.reloadControls(ofKind: ControlKinds.microphone)
-            ControlCenter.shared.reloadControls(ofKind: ControlKinds.receive)
-        }
         #endif
     }
 }

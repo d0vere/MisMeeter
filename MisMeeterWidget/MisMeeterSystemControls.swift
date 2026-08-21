@@ -2,62 +2,48 @@ import AppIntents
 import SwiftUI
 import WidgetKit
 
-/// Small value object rendered by Control Center / Lock Screen.
-/// `isMuted` is the toggle value: ON means mute is engaged, matching the
-/// native Silent Mode mental model and allowing iOS to highlight mute in red.
-struct TransportControlValue: Sendable {
-    let isAvailable: Bool
-    let isMuted: Bool
-}
-
-private enum MisMeeterControlStateResolver {
-    /// Control Center must read the state that the authoritative runtime publishes
-    /// synchronously before a SetValueIntent returns. Do not use ActivityKit here:
-    /// Live Activity updates are asynchronous and can lag one interaction behind,
-    /// which makes WidgetKit re-render the toggle with the previous value.
-    static func snapshot() -> SharedTransportSnapshot {
-        SharedAppState.readSnapshot()
-    }
-}
-
+/// MisMeeter v4 deliberately models each system Control as one Boolean: MUTE.
+/// This mirrors Apple's WWDC24 ControlWidgetToggle example as closely as possible.
+///
+/// - `false` = audio path is not muted (normal symbol, neutral system appearance)
+/// - `true`  = mute is engaged (red tint, slashed symbol, highlighted toggle)
+///
+/// Transport running/idle metadata is intentionally not part of the toggle value.
+/// A stale transport-status callback must never be able to freeze or invert a mute
+/// control. The authoritative mute value is published synchronously by the app to
+/// the dedicated App Group control-state file before the SetValueIntent returns.
 @available(iOSApplicationExtension 18.0, *)
 struct MisMeeterMicrophoneMuteControl: ControlWidget {
     var body: some ControlWidgetConfiguration {
         StaticControlConfiguration(
-            kind: SharedAppState.ControlKinds.microphone,
+            kind: SharedControlStateStore.Kinds.microphone,
             provider: Provider()
-        ) { state in
+        ) { isMuted in
             ControlWidgetToggle(
                 "MisMeeter TX",
-                isOn: state.isAvailable && state.isMuted,
+                isOn: isMuted,
                 action: SetMicrophoneMuteControlIntent()
-            ) { isMuted in
+            ) { newValue in
                 Label(
-                    state.isAvailable ? (isMuted ? "TX MUTED" : "TX ACTIVE") : "TX IDLE",
-                    systemImage: state.isAvailable
-                        ? (isMuted ? "mic.slash.fill" : "mic.fill")
-                        : "mic"
+                    newValue ? "TX MUTED" : "TX AUDIO",
+                    systemImage: newValue ? "mic.slash.fill" : "mic.fill"
                 )
+                .controlWidgetStatus(newValue ? "TX microphone muted" : "TX microphone unmuted")
+                .controlWidgetActionHint(newValue ? "Unmute TX" : "Mute TX")
             }
-            // ON == muted. iOS therefore renders mute as an illuminated red toggle,
-            // the same native interaction model used by Silent Mode.
+            // ON == muted. The system highlights the ON state using this tint,
+            // matching the visual language of iOS's own mute/silent controls.
             .tint(.red)
         }
         .displayName("MisMeeter TX Mute")
-        .description("Mute or unmute the active MisMeeter microphone transmission.")
+        .description("Mute or unmute MisMeeter microphone transmission.")
     }
 
     struct Provider: ControlValueProvider {
-        var previewValue: TransportControlValue {
-            TransportControlValue(isAvailable: true, isMuted: false)
-        }
+        let previewValue = false
 
-        func currentValue() async throws -> TransportControlValue {
-            let snapshot = MisMeeterControlStateResolver.snapshot()
-            return TransportControlValue(
-                isAvailable: snapshot.isStreaming,
-                isMuted: snapshot.isMuted
-            )
+        func currentValue() async throws -> Bool {
+            SharedControlStateStore.read().txMuted
         }
     }
 }
@@ -66,38 +52,32 @@ struct MisMeeterMicrophoneMuteControl: ControlWidget {
 struct MisMeeterReceiveMuteControl: ControlWidget {
     var body: some ControlWidgetConfiguration {
         StaticControlConfiguration(
-            kind: SharedAppState.ControlKinds.receive,
+            kind: SharedControlStateStore.Kinds.receive,
             provider: Provider()
-        ) { state in
+        ) { isMuted in
             ControlWidgetToggle(
                 "MisMeeter RX",
-                isOn: state.isAvailable && state.isMuted,
+                isOn: isMuted,
                 action: SetReceiveMuteControlIntent()
-            ) { isMuted in
+            ) { newValue in
                 Label(
-                    state.isAvailable ? (isMuted ? "RX MUTED" : "RX ACTIVE") : "RX IDLE",
-                    systemImage: state.isAvailable
-                        ? (isMuted ? "speaker.slash.fill" : "speaker.wave.3.fill")
-                        : "speaker"
+                    newValue ? "RX MUTED" : "RX AUDIO",
+                    systemImage: newValue ? "speaker.slash.fill" : "speaker.wave.3.fill"
                 )
+                .controlWidgetStatus(newValue ? "RX audio muted" : "RX audio unmuted")
+                .controlWidgetActionHint(newValue ? "Unmute RX" : "Mute RX")
             }
             .tint(.red)
         }
         .displayName("MisMeeter RX Mute")
-        .description("Mute or unmute active MisMeeter receive playback.")
+        .description("Mute or unmute MisMeeter receive playback.")
     }
 
     struct Provider: ControlValueProvider {
-        var previewValue: TransportControlValue {
-            TransportControlValue(isAvailable: true, isMuted: false)
-        }
+        let previewValue = false
 
-        func currentValue() async throws -> TransportControlValue {
-            let snapshot = MisMeeterControlStateResolver.snapshot()
-            return TransportControlValue(
-                isAvailable: snapshot.isReceiving,
-                isMuted: snapshot.isReceiveMuted
-            )
+        func currentValue() async throws -> Bool {
+            SharedControlStateStore.read().rxMuted
         }
     }
 }

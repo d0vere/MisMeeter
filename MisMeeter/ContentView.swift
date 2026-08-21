@@ -88,6 +88,7 @@ struct ContentView: View {
             wireRuntimeCallbacks()
             MisMeeterRuntime.shared.gainDB = Float(gainDB)
             reconcileRuntimeState()
+            MisMeeterRuntime.shared.refreshSystemControls()
             Task {
                 await MisMeeterRuntime.shared.cleanupOrphanedLiveActivitiesIfIdle()
                 await MainActor.run { reconcileRuntimeState() }
@@ -97,6 +98,7 @@ struct ContentView: View {
         .onChange(of: scenePhase) { _, phase in
             if phase == .active {
                 reconcileRuntimeState()
+                MisMeeterRuntime.shared.refreshSystemControls()
             }
             updateScenePhase(phase)
         }

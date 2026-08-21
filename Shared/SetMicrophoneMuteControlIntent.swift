@@ -1,13 +1,16 @@
 import AppIntents
 
-/// Native Control Center / Lock Screen mute switch for the active TX microphone.
+/// Native iOS 18 Control Center / Lock Screen toggle for TX mute.
 ///
-/// `LiveActivityIntent` is intentional: Apple runs these intents in the app process,
-/// so the control reaches the one authoritative MisMeeterRuntime directly instead of
-/// trying to control audio through an extension-process mailbox.
+/// This follows Apple's WWDC24 control pattern exactly: SetValueIntent supplies
+/// the final Boolean state, and LiveActivityIntent moves execution into the app
+/// process without opening the UI. The runtime persists the new control state
+/// before perform() returns; WidgetKit then reloads the control automatically.
 struct SetMicrophoneMuteControlIntent: SetValueIntent, LiveActivityIntent {
     static var title: LocalizedStringResource = "Mute TX Microphone"
-    static var description = IntentDescription("Mute or unmute the active MisMeeter microphone transmission.")
+    static var description = IntentDescription(
+        "Mute or unmute the active MisMeeter microphone transmission."
+    )
     static var openAppWhenRun: Bool = false
     static var authenticationPolicy: IntentAuthenticationPolicy = .alwaysAllowed
 
@@ -16,11 +19,7 @@ struct SetMicrophoneMuteControlIntent: SetValueIntent, LiveActivityIntent {
 
     func perform() async throws -> some IntentResult {
         #if MISMEETER_APP
-        let runtime = MisMeeterRuntime.shared
-        if runtime.isStreaming {
-            runtime.setMuted(value)
-            await runtime.syncLiveActivity()
-        }
+        await MisMeeterRuntime.shared.setMutedFromSystemControl(value)
         #endif
         return .result()
     }

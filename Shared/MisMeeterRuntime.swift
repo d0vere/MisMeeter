@@ -8,6 +8,8 @@ final class MisMeeterRuntime {
     private let transmitter: VBANTransmitter
     private let microphone: MicrophoneEngine
     private let receiver: VBANReceiver
+    private let txMuteCommandLock = NSLock()
+    private let rxMuteCommandLock = NSLock()
 
     private var _isMuted = false
     private var _isStreaming = false
@@ -17,6 +19,7 @@ final class MisMeeterRuntime {
     private var _preset = VBANPreset(name: "Preset 1", host: "", port: 6980, streamName: "MisMeeter")
     private var _receivePreset = VBANReceivePreset(name: "Receive", port: 6980, streamName: "MisMeeterRX")
     private var _activityPresentationRevision: UInt64 = 0
+    private var _controlRevision: UInt64 = SharedControlStateStore.read().revision
 
     var onStatusChange: ((String) -> Void)?
     var onMeter: ((Float) -> Void)?
@@ -67,6 +70,7 @@ final class MisMeeterRuntime {
         }
 
         publishSharedState(status: "Ready")
+        publishControlState()
     }
 
     var isMuted: Bool { stateQueue.sync { _isMuted } }
@@ -113,6 +117,7 @@ final class MisMeeterRuntime {
             receiver.refreshAudioSession(transmitterActive: true)
         }
         publishSharedState(status: isReceiving ? "Duplex live" : "Live")
+        publishControlState(reloadMicrophone: true)
 
         // ActivityKit is the only Dynamic Island / Lock Screen presentation surface.
         // There is deliberately no legacy system-media session: that avoids the
@@ -124,6 +129,7 @@ final class MisMeeterRuntime {
         guard isStreaming else {
             await updateActivityLifecycle()
             publishSharedState(status: isReceiving ? receiveStatusText : "Ready")
+            publishControlState(reloadMicrophone: true)
             return
         }
 
@@ -137,6 +143,7 @@ final class MisMeeterRuntime {
         // Publish the intended transport state before lower-level stop callbacks fire.
         // This prevents transient snapshots such as "Stopped" + isStreaming=true.
         publishSharedState(status: keepAudioSession ? receiveStatusText : "Ready")
+        publishControlState(reloadMicrophone: true)
         microphone.stop(deactivateSession: !keepAudioSession)
         transmitter.stop()
         if keepAudioSession {
@@ -146,7 +153,23 @@ final class MisMeeterRuntime {
     }
 
     func startReceiving(preset: VBANReceivePreset) throws {
-        try receiver.start(preset: preset, transmitterAlreadyActive: isStreaming)
+        do {
+            try receiver.start(preset: preset, transmitterAlreadyActive: isStreaming)
+        } catch {
+            // VBANReceiver.start() intentionally tears down any previous receiver
+            // before rebuilding the socket/audio graph. If rebuilding fails, the
+            // runtime must not keep advertising the old RX session as active.
+            stateQueue.sync {
+                _isReceiving = false
+                _isReceiveMuted = false
+                if !_isStreaming { _startedAt = nil }
+            }
+            publishSharedState(status: error.localizedDescription)
+            publishControlState(reloadReceive: true)
+            Task { await updateActivityLifecycle() }
+            throw error
+        }
+
         stateQueue.sync {
             _receivePreset = preset
             _isReceiving = true
@@ -154,6 +177,7 @@ final class MisMeeterRuntime {
             if _startedAt == nil { _startedAt = Date() }
         }
         publishSharedState(status: isStreaming ? "Duplex live" : "Listening")
+        publishControlState(reloadReceive: true)
         Task { await ensureLiveActivity() }
     }
 
@@ -167,6 +191,7 @@ final class MisMeeterRuntime {
 
         let status = keepAudioSession ? (isMuted ? "Microphone muted" : "Live") : "Ready"
         publishSharedState(status: status)
+        publishControlState(reloadReceive: true)
         receiver.stop(deactivateSession: !keepAudioSession)
         Task { await updateActivityLifecycle() }
     }
@@ -183,6 +208,7 @@ final class MisMeeterRuntime {
             _startedAt = nil
         }
         SharedAppState.writeSnapshot(.idle)
+        publishControlState(reloadMicrophone: true, reloadReceive: true)
 
         if hadTX {
             microphone.stop(deactivateSession: false)
@@ -199,49 +225,151 @@ final class MisMeeterRuntime {
 
     @discardableResult
     func toggleMuted() -> Bool {
-        guard isStreaming else { return false }
-        let value = stateQueue.sync {
+        txMuteCommandLock.lock()
+        let newValue: Bool? = stateQueue.sync {
+            guard _isStreaming else { return nil }
             _isMuted.toggle()
             return _isMuted
         }
+        guard let value = newValue else {
+            txMuteCommandLock.unlock()
+            return false
+        }
         transmitter.setMuted(value)
         publishSharedState(status: value ? "Microphone muted" : (isReceiving ? "Duplex live" : "Live"))
+        publishControlState(reloadMicrophone: true)
+        txMuteCommandLock.unlock()
+
         Task { await syncLiveActivity() }
         return value
     }
 
+    /// App/UI entry point. Runtime state is committed and persisted before asking
+    /// iOS to reload the Control Center representation.
     func setMuted(_ value: Bool) {
-        guard isStreaming else { return }
-        stateQueue.sync { _isMuted = value }
+        txMuteCommandLock.lock()
+        let applied = stateQueue.sync { () -> Bool in
+            guard _isStreaming else { return false }
+            _isMuted = value
+            return true
+        }
+        guard applied else {
+            txMuteCommandLock.unlock()
+            return
+        }
         transmitter.setMuted(value)
         publishSharedState(status: value ? "Microphone muted" : (isReceiving ? "Duplex live" : "Live"))
+        publishControlState(reloadMicrophone: true)
+        txMuteCommandLock.unlock()
+
         Task { await syncLiveActivity() }
+    }
+
+    /// ControlWidget entry point. Do not request a ControlCenter reload here:
+    /// WidgetKit automatically reloads the interacted control after perform()
+    /// returns. The state file is written synchronously before that return.
+    func setMutedFromSystemControl(_ value: Bool) async {
+        let applied = applyMutedFromSystemControlSynchronously(value)
+        if applied {
+            await syncLiveActivity()
+        }
+    }
+
+    private func applyMutedFromSystemControlSynchronously(_ value: Bool) -> Bool {
+        txMuteCommandLock.lock()
+        defer { txMuteCommandLock.unlock() }
+
+        let applied = stateQueue.sync { () -> Bool in
+            guard _isStreaming else { return false }
+            _isMuted = value
+            return true
+        }
+        guard applied else {
+            // Normalize the persisted mute bit to false if TX is not active. Do
+            // not race WidgetKit's automatic post-intent reload with a manual one.
+            publishControlState()
+            return false
+        }
+
+        transmitter.setMuted(value)
+        publishSharedState(
+            status: value ? "Microphone muted" : (isReceiving ? "Duplex live" : "Live")
+        )
+        publishControlState()
+        return true
     }
 
     @discardableResult
     func toggleReceiveMuted() -> Bool {
-        guard isReceiving else { return false }
-        // Update the authoritative state before touching the receiver. The receiver
-        // emits an onStatus callback synchronously from setOutputMuted(); publishing
-        // the old value from that callback used to race Control Center refreshes.
-        let value = stateQueue.sync {
+        rxMuteCommandLock.lock()
+        // Commit the authoritative state before touching the receiver. The receiver
+        // emits an onStatus callback synchronously from setOutputMuted().
+        let newValue: Bool? = stateQueue.sync {
+            guard _isReceiving else { return nil }
             _isReceiveMuted.toggle()
             return _isReceiveMuted
         }
+        guard let value = newValue else {
+            rxMuteCommandLock.unlock()
+            return false
+        }
         receiver.setOutputMuted(value)
         publishSharedState(status: value ? "Receive muted" : (isStreaming ? "Duplex live" : "Listening"))
+        publishControlState(reloadReceive: true)
+        rxMuteCommandLock.unlock()
+
         Task { await syncLiveActivity() }
         return value
     }
 
+    /// App/UI entry point.
     func setReceiveMuted(_ value: Bool) {
-        guard isReceiving else { return }
-        // Commit state first so every synchronous receiver callback observes the
-        // requested value. SharedAppState is then written before this method returns.
-        stateQueue.sync { _isReceiveMuted = value }
+        rxMuteCommandLock.lock()
+        let applied = stateQueue.sync { () -> Bool in
+            guard _isReceiving else { return false }
+            _isReceiveMuted = value
+            return true
+        }
+        guard applied else {
+            rxMuteCommandLock.unlock()
+            return
+        }
         receiver.setOutputMuted(value)
         publishSharedState(status: value ? "Receive muted" : (isStreaming ? "Duplex live" : "Listening"))
+        publishControlState(reloadReceive: true)
+        rxMuteCommandLock.unlock()
+
         Task { await syncLiveActivity() }
+    }
+
+    /// ControlWidget entry point; see setMutedFromSystemControl(_:).
+    func setReceiveMutedFromSystemControl(_ value: Bool) async {
+        let applied = applyReceiveMutedFromSystemControlSynchronously(value)
+        if applied {
+            await syncLiveActivity()
+        }
+    }
+
+    private func applyReceiveMutedFromSystemControlSynchronously(_ value: Bool) -> Bool {
+        rxMuteCommandLock.lock()
+        defer { rxMuteCommandLock.unlock() }
+
+        let applied = stateQueue.sync { () -> Bool in
+            guard _isReceiving else { return false }
+            _isReceiveMuted = value
+            return true
+        }
+        guard applied else {
+            publishControlState()
+            return false
+        }
+
+        receiver.setOutputMuted(value)
+        publishSharedState(
+            status: value ? "Receive muted" : (isStreaming ? "Duplex live" : "Listening")
+        )
+        publishControlState()
+        return true
     }
 
     func beginLockTransition() {
@@ -269,8 +397,12 @@ final class MisMeeterRuntime {
     }
 
     // Shared snapshots are output-only: they describe what the runtime actually
-    // applied. External controls send exact mailbox commands and never mutate this
-    // snapshot directly, so there is intentionally no snapshot -> runtime reconcile.
+    // applied. System Controls invoke exact SetValueIntent values in the app process;
+    // there is intentionally no snapshot -> runtime reconciliation loop.
+
+    func refreshSystemControls() {
+        publishControlState(reloadMicrophone: true, reloadReceive: true)
+    }
 
     func cleanupOrphanedLiveActivitiesIfIdle() async {
         guard !isStreaming && !isReceiving else { return }
@@ -371,6 +503,34 @@ final class MisMeeterRuntime {
             startedAt: startedAt,
             status: status
         )
+    }
+
+    /// Publishes only the two Boolean mute values that system Controls need.
+    /// Lower-level transmitter/receiver status callbacks never write this store, so
+    /// a textual transport update cannot roll a toggle backward. Revision ordering
+    /// also prevents an older concurrent publication from overwriting a newer one.
+    private func publishControlState(
+        reloadMicrophone: Bool = false,
+        reloadReceive: Bool = false
+    ) {
+        let state = stateQueue.sync { () -> SharedControlState in
+            _controlRevision &+= 1
+            return SharedControlState(
+                txMuted: _isStreaming && _isMuted,
+                rxMuted: _isReceiving && _isReceiveMuted,
+                revision: _controlRevision,
+                publishedAt: Date()
+            )
+        }
+
+        SharedControlStateStore.write(state)
+
+        if reloadMicrophone {
+            SharedControlStateStore.reloadMicrophoneControl()
+        }
+        if reloadReceive {
+            SharedControlStateStore.reloadReceiveControl()
+        }
     }
 
     private func publishSharedState(status: String) {

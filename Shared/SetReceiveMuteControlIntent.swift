@@ -1,12 +1,12 @@
 import AppIntents
 
-/// Native Control Center / Lock Screen mute switch for active RX playback.
-///
-/// The system supplies the desired mute value. Conforming to `LiveActivityIntent`
-/// forces execution into the app process, where the running VBAN receiver lives.
+/// Native iOS 18 Control Center / Lock Screen toggle for RX mute.
+/// See SetMicrophoneMuteControlIntent for the execution/state model.
 struct SetReceiveMuteControlIntent: SetValueIntent, LiveActivityIntent {
     static var title: LocalizedStringResource = "Mute RX Audio"
-    static var description = IntentDescription("Mute or unmute active MisMeeter receive playback.")
+    static var description = IntentDescription(
+        "Mute or unmute active MisMeeter receive playback."
+    )
     static var openAppWhenRun: Bool = false
     static var authenticationPolicy: IntentAuthenticationPolicy = .alwaysAllowed
 
@@ -15,11 +15,7 @@ struct SetReceiveMuteControlIntent: SetValueIntent, LiveActivityIntent {
 
     func perform() async throws -> some IntentResult {
         #if MISMEETER_APP
-        let runtime = MisMeeterRuntime.shared
-        if runtime.isReceiving {
-            runtime.setReceiveMuted(value)
-            await runtime.syncLiveActivity()
-        }
+        await MisMeeterRuntime.shared.setReceiveMutedFromSystemControl(value)
         #endif
         return .result()
     }

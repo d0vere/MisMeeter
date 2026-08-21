@@ -1,4 +1,3 @@
-import ActivityKit
 import AppIntents
 import SwiftUI
 import WidgetKit
@@ -12,33 +11,12 @@ struct TransportControlValue: Sendable {
 }
 
 private enum MisMeeterControlStateResolver {
-    /// Prefer ActivityKit while a MisMeeter Live Activity exists. It is already the
-    /// state source rendered in the Dynamic Island, so the Controls and Island stay
-    /// visually consistent. Fall back to the newest App Group snapshot otherwise.
+    /// Control Center must read the state that the authoritative runtime publishes
+    /// synchronously before a SetValueIntent returns. Do not use ActivityKit here:
+    /// Live Activity updates are asynchronous and can lag one interaction behind,
+    /// which makes WidgetKit re-render the toggle with the previous value.
     static func snapshot() -> SharedTransportSnapshot {
-        if let activity = Activity<MicActivityAttributes>.activities.first(where: {
-            $0.activityState == .active || $0.activityState == .stale
-        }) {
-            let state = activity.content.state
-            if state.isStreaming || state.isReceiving {
-                let shared = SharedAppState.readSnapshot()
-                return SharedTransportSnapshot(
-                    isStreaming: state.isStreaming,
-                    isMuted: state.isMuted,
-                    isReceiving: state.isReceiving,
-                    isReceiveMuted: state.isReceiveMuted,
-                    presetName: state.presetLabel,
-                    sendPresetName: state.sendPresetLabel,
-                    receivePresetName: state.receivePresetLabel,
-                    destination: state.destinationLabel,
-                    streamName: shared.streamName,
-                    startedAt: state.startedAt,
-                    status: state.statusLabel,
-                    publishedAt: shared.publishedAt
-                )
-            }
-        }
-        return SharedAppState.readSnapshot()
+        SharedAppState.readSnapshot()
     }
 }
 

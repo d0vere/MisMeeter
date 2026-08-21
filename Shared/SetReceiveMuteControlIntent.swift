@@ -18,6 +18,7 @@ struct SetReceiveMuteControlIntent: SetValueIntent, LiveActivityIntent {
         let runtime = MisMeeterRuntime.shared
         if runtime.isReceiving {
             runtime.setReceiveMuted(value)
+            await runtime.syncLiveActivity()
         }
         #endif
         return .result()

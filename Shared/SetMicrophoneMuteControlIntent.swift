@@ -19,6 +19,7 @@ struct SetMicrophoneMuteControlIntent: SetValueIntent, LiveActivityIntent {
         let runtime = MisMeeterRuntime.shared
         if runtime.isStreaming {
             runtime.setMuted(value)
+            await runtime.syncLiveActivity()
         }
         #endif
         return .result()

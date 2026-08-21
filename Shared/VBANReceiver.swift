@@ -322,12 +322,6 @@ final class VBANReceiver {
     }
 
 
-    @discardableResult
-    func toggleOutputMuted() -> Bool {
-        setOutputMuted(!isOutputMuted)
-        return isOutputMuted
-    }
-
     func setOutputMuted(_ muted: Bool) {
         guard isRunning else {
             isOutputMuted = false

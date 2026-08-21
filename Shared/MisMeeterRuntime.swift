@@ -221,8 +221,14 @@ final class MisMeeterRuntime {
     @discardableResult
     func toggleReceiveMuted() -> Bool {
         guard isReceiving else { return false }
-        let value = receiver.toggleOutputMuted()
-        stateQueue.sync { _isReceiveMuted = value }
+        // Update the authoritative state before touching the receiver. The receiver
+        // emits an onStatus callback synchronously from setOutputMuted(); publishing
+        // the old value from that callback used to race Control Center refreshes.
+        let value = stateQueue.sync {
+            _isReceiveMuted.toggle()
+            return _isReceiveMuted
+        }
+        receiver.setOutputMuted(value)
         publishSharedState(status: value ? "Receive muted" : (isStreaming ? "Duplex live" : "Listening"))
         Task { await syncLiveActivity() }
         return value
@@ -230,8 +236,10 @@ final class MisMeeterRuntime {
 
     func setReceiveMuted(_ value: Bool) {
         guard isReceiving else { return }
-        receiver.setOutputMuted(value)
+        // Commit state first so every synchronous receiver callback observes the
+        // requested value. SharedAppState is then written before this method returns.
         stateQueue.sync { _isReceiveMuted = value }
+        receiver.setOutputMuted(value)
         publishSharedState(status: value ? "Receive muted" : (isStreaming ? "Duplex live" : "Listening"))
         Task { await syncLiveActivity() }
     }

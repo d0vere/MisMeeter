@@ -70,6 +70,16 @@ struct SharedTransportSnapshot: Codable, Hashable, Sendable {
         status = try container.decodeIfPresent(String.self, forKey: .status) ?? "Ready"
         publishedAt = try container.decodeIfPresent(Date.self, forKey: .publishedAt)
     }
+
+    /// Enforces invariants shared by every presentation surface. A stopped transport
+    /// can never remain visually muted, and a fully idle snapshot has no start time.
+    func normalized() -> SharedTransportSnapshot {
+        var value = self
+        if !value.isStreaming { value.isMuted = false }
+        if !value.isReceiving { value.isReceiveMuted = false }
+        if !value.isStreaming && !value.isReceiving { value.startedAt = nil }
+        return value
+    }
 }
 
 enum SharedAppState {
@@ -101,11 +111,11 @@ enum SharedAppState {
         else {
             return .idle
         }
-        return snapshot
+        return snapshot.normalized()
     }
 
     static func writeSnapshot(_ value: SharedTransportSnapshot, reloadWidgets: Bool = true) {
-        var published = value
+        var published = value.normalized()
         published.publishedAt = Date()
 
         guard let url = snapshotURL,

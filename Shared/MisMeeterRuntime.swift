@@ -10,6 +10,10 @@ final class MisMeeterRuntime {
     private let receiver: VBANReceiver
     private let txMuteCommandLock = NSLock()
     private let rxMuteCommandLock = NSLock()
+    /// Serializes snapshot capture + App Group publication. Capturing after acquiring
+    /// this lock prevents an older callback from writing state fields captured before
+    /// a newer runtime mutation.
+    private let statePublicationLock = NSLock()
 
     private var _isMuted = false
     private var _isStreaming = false
@@ -19,6 +23,16 @@ final class MisMeeterRuntime {
     private var _preset = VBANPreset(name: "Preset 1", host: "", port: 6980, streamName: "MisMeeter")
     private var _receivePreset = VBANReceivePreset(name: "Receive", port: 6980, streamName: "MisMeeterRX")
     private var _activityPresentationRevision: UInt64 = 0
+
+    private struct RuntimeSnapshot {
+        let isStreaming: Bool
+        let isMuted: Bool
+        let isReceiving: Bool
+        let isReceiveMuted: Bool
+        let startedAt: Date?
+        let preset: VBANPreset
+        let receivePreset: VBANReceivePreset
+    }
 
     var onStatusChange: ((String) -> Void)?
     var onMeter: ((Float) -> Void)?
@@ -34,6 +48,10 @@ final class MisMeeterRuntime {
     var onReceiverStatus: ((String) -> Void)?
     var onReceiverDiagnostics: ((UInt64, UInt64, UInt64, Int, UInt64, Bool, Float, Double) -> Void)?
     var onTransportMode: ((TransportState, Int, Int, Double) -> Void)?
+    /// Emitted after every authoritative transport snapshot is persisted. This keeps
+    /// the in-app SwiftUI state synchronized with changes initiated from system
+    /// Controls, not only with changes initiated by the app UI.
+    var onTransportSnapshotChange: ((SharedTransportSnapshot) -> Void)?
 
     private init() {
         let tx = VBANTransmitter()
@@ -206,7 +224,7 @@ final class MisMeeterRuntime {
             _isReceiveMuted = false
             _startedAt = nil
         }
-        SharedAppState.writeSnapshot(.idle)
+        publishSharedState(status: "Ready")
         publishControlState(reloadControls: true)
 
         if hadTX {
@@ -284,9 +302,10 @@ final class MisMeeterRuntime {
             return true
         }
         guard applied else {
-            // Normalize the persisted mute bit to false if TX is not active. Do
-            // not race WidgetKit's automatic post-intent reload with a manual one.
-            publishControlState()
+            // The interaction may have started from a stale system surface. Persist
+            // the authoritative inactive state before perform() returns; WidgetKit's
+            // automatic post-intent refresh will then read the provider again.
+            publishSharedState(status: currentStatusText)
             return false
         }
 
@@ -359,7 +378,7 @@ final class MisMeeterRuntime {
             return true
         }
         guard applied else {
-            publishControlState()
+            publishSharedState(status: currentStatusText)
             return false
         }
 
@@ -401,7 +420,7 @@ final class MisMeeterRuntime {
 
     func refreshSystemControls() {
         // Re-publish the canonical transport snapshot first, then invalidate the
-        // exact Control kinds. The extension rebuilds directly from this snapshot.
+        // exact Control kinds. Their providers re-read this snapshot on refresh.
         publishSharedState(status: currentStatusText)
         publishControlState(reloadControls: true)
     }
@@ -417,7 +436,7 @@ final class MisMeeterRuntime {
             _isReceiveMuted = false
             _startedAt = nil
         }
-        SharedAppState.writeSnapshot(.idle)
+        publishSharedState(status: "Ready")
         publishControlState(reloadControls: true)
     }
 
@@ -475,13 +494,17 @@ final class MisMeeterRuntime {
     }
 
     private var receiveStatusText: String {
-        isReceiveMuted ? "Receive muted" : "Listening"
+        let runtime = runtimeSnapshot()
+        return runtime.isReceiveMuted ? "Receive muted" : "Listening"
     }
 
     private var currentStatusText: String {
-        if isStreaming && isReceiving { return (isMuted || isReceiveMuted) ? "Live · muted channel" : "Duplex live" }
-        if isStreaming { return isMuted ? "Microphone muted" : "Live" }
-        if isReceiving { return isReceiveMuted ? "Receive muted" : "Listening" }
+        let runtime = runtimeSnapshot()
+        if runtime.isStreaming && runtime.isReceiving {
+            return (runtime.isMuted || runtime.isReceiveMuted) ? "Live · muted channel" : "Duplex live"
+        }
+        if runtime.isStreaming { return runtime.isMuted ? "Microphone muted" : "Live" }
+        if runtime.isReceiving { return runtime.isReceiveMuted ? "Receive muted" : "Listening" }
         return "Ready"
     }
 
@@ -498,33 +521,52 @@ final class MisMeeterRuntime {
         )
     }
 
+    private func runtimeSnapshot() -> RuntimeSnapshot {
+        stateQueue.sync {
+            RuntimeSnapshot(
+                isStreaming: _isStreaming,
+                isMuted: _isStreaming && _isMuted,
+                isReceiving: _isReceiving,
+                isReceiveMuted: _isReceiving && _isReceiveMuted,
+                startedAt: (_isStreaming || _isReceiving) ? _startedAt : nil,
+                preset: _preset,
+                receivePreset: _receivePreset
+            )
+        }
+    }
+
     private func sharedSnapshot(status: String) -> SharedTransportSnapshot {
-        let txPreset = activePreset
-        let rxPreset = activeReceivePreset
-        let primaryPresetName = isStreaming ? txPreset.name : (isReceiving ? rxPreset.name : txPreset.name)
-        let primaryDestination = isStreaming
+        let runtime = runtimeSnapshot()
+        let txPreset = runtime.preset
+        let rxPreset = runtime.receivePreset
+        let primaryPresetName = runtime.isStreaming
+            ? txPreset.name
+            : (runtime.isReceiving ? rxPreset.name : txPreset.name)
+        let primaryDestination = runtime.isStreaming
             ? txPreset.destinationLabel
-            : (isReceiving ? "RX · UDP \(rxPreset.port)" : "Not connected")
-        let primaryStreamName = isStreaming ? txPreset.sanitizedStreamName : rxPreset.sanitizedStreamName
+            : (runtime.isReceiving ? "RX · UDP \(rxPreset.port)" : "Not connected")
+        let primaryStreamName = runtime.isStreaming
+            ? txPreset.sanitizedStreamName
+            : rxPreset.sanitizedStreamName
 
         return SharedTransportSnapshot(
-            isStreaming: isStreaming,
-            isMuted: isMuted,
-            isReceiving: isReceiving,
-            isReceiveMuted: isReceiveMuted,
+            isStreaming: runtime.isStreaming,
+            isMuted: runtime.isMuted,
+            isReceiving: runtime.isReceiving,
+            isReceiveMuted: runtime.isReceiveMuted,
             presetName: primaryPresetName,
             sendPresetName: txPreset.name,
             receivePresetName: rxPreset.name,
             destination: primaryDestination,
             streamName: primaryStreamName,
-            startedAt: startedAt,
+            startedAt: runtime.startedAt,
             status: status
         )
     }
 
     /// Invalidates the system Controls after an external runtime mutation.
     ///
-    /// There is intentionally no second Control-specific state file in 4.0.2. The
+    /// There is intentionally no second Control-specific state file. The
     /// authoritative state was already persisted by `publishSharedState(status:)`
     /// before this method is called. A SetValueIntent interaction passes `false`
     /// here and relies on WidgetKit's automatic post-perform reload instead.
@@ -534,6 +576,11 @@ final class MisMeeterRuntime {
     }
 
     private func publishSharedState(status: String) {
-        SharedAppState.writeSnapshot(sharedSnapshot(status: status))
+        statePublicationLock.lock()
+        let snapshot = sharedSnapshot(status: status)
+        SharedAppState.writeSnapshot(snapshot)
+        statePublicationLock.unlock()
+
+        onTransportSnapshotChange?(snapshot)
     }
 }

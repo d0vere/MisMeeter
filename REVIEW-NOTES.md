@@ -1,23 +1,33 @@
-# MisMeeter 4.0.2 review notes
+# MisMeeter 4.0.3 review notes
 
-4.0.2 is a focused Control Center synchronization release over 4.0.1. The VBAN transport, adaptive jitter, audio-session policy, RX speaker recovery, Live Activity/Dynamic Island layout and SetValueIntent tap behavior are intentionally unchanged.
+4.0.3 corrects the Control Center state model used by 4.0.2 and hardens synchronization between the audio runtime, App Group snapshot, system controls and in-app SwiftUI state.
 
-## Control Center synchronization
+## Root cause fixed
 
-- RX/TX Controls no longer maintain a second `SharedControlState` data file.
-- `SharedAppState` (`transport-state-v4.json`) is now the single authoritative App Group snapshot for the app, widgets, Live Activity presentation and Control Center rendering.
-- The Controls use `StaticControlConfiguration` without a `ControlValueProvider`; every requested Control reload rebuilds the template and reads `SharedAppState` directly in the widget extension.
-- External runtime mutations invalidate the exact configured Control kinds with `ControlCenter.shared.reloadControls(ofKind:)` for RX and TX.
-- A Control tap still relies on WidgetKit's automatic reload after `SetValueIntent.perform()` completes; no competing manual reload is issued from the interacted intent.
+4.0.2 created `StaticControlConfiguration` without a `ControlValueProvider` and captured `SharedAppState.readSnapshot()` while constructing the configuration body. This bypassed WidgetKit's documented current-value lifecycle for stateful controls and could leave Control Center rendering stale TX/RX state after app-originated transport changes.
+
+## 4.0.3 Control Center model
+
+- RX/TX controls now use `ControlValueProvider`.
+- `currentValue()` reads the authoritative atomic App Group snapshot.
+- Provider values contain both `isActive` and `isMuted`, so IDLE/ACTIVE and mute feedback come from the same snapshot.
+- Controls are disabled while their transport is inactive.
+- App-originated start/stop/mute changes reload the exact configured Control kinds.
+- Control interactions still rely on WidgetKit's automatic refresh after `SetValueIntent.perform()`; no competing manual reload is performed inside the intent.
+- A stale in-flight tap against an already-stopped transport now republishes the authoritative inactive snapshot before the intent returns.
+
+## Additional synchronization hardening
+
+- Runtime snapshots are captured atomically from one `stateQueue.sync`, preventing mixed TX/RX fields from separate reads.
+- Snapshot capture + App Group publication are serialized so an older callback cannot overwrite newer transport fields.
+- Persisted snapshots normalize impossible states (`muted == true` while the corresponding transport is stopped).
+- Runtime publishes a transport snapshot callback so the SwiftUI UI immediately reconciles changes initiated from Control Center.
+- Existing v4 Control `kind` identifiers remain unchanged to preserve user placements.
 
 ## Preserved behavior
 
-- RX/TX mute commands execute in the app process through `SetValueIntent + LiveActivityIntent`.
-- `authenticationPolicy = .alwaysAllowed` remains unchanged for locked-device use.
-- Muted is the toggle ON state and uses red tint plus the slashed SF Symbol.
-- The v4 Control `kind` identifiers remain unchanged, preserving existing placements.
-- No Now Playing, MediaPlayer or silent-audio workaround is present.
+VBAN encoding/decoding, adaptive RX jitter, audio-session policy, background audio, Live Activity geometry and the existing mute semantics are otherwise unchanged.
 
-## Process termination limitation
+## Validation scope
 
-A force-quit can terminate a background-capable process without a guaranteed final lifecycle callback. iOS only refreshes a Control after interaction, an app-requested reload, or a Control push. 4.0.2 guarantees app-originated state synchronization while the app process is able to request the documented reload; it does not claim an API capability that iOS does not provide after an unannounced process kill.
+`Scripts/validate-package.sh` performs Swift parser checks plus architecture/source-membership assertions. The GitHub workflow generates a fresh Xcode project with XcodeGen and is configured to build an unsigned Release app with Xcode 16.4 / iOS 18.5 while rejecting Swift compiler warnings.

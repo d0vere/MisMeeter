@@ -2,43 +2,79 @@ import AppIntents
 import SwiftUI
 import WidgetKit
 
+/// The value rendered by a system Control.
+///
+/// `isOn` alone is not sufficient for MisMeeter because a mute toggle must also
+/// know whether the corresponding transport is actually running. Keeping both bits
+/// in the provider value lets WidgetKit render and disable the control from one
+/// coherent App Group snapshot.
+struct MisMeeterControlValue: Hashable, Sendable {
+    let isActive: Bool
+    let isMuted: Bool
+
+    init(isActive: Bool, isMuted: Bool) {
+        self.isActive = isActive
+        self.isMuted = isActive && isMuted
+    }
+}
+
 /// iOS 18 system Controls for MisMeeter.
 ///
-/// Important: these are intentionally `StaticControlConfiguration`s with no
-/// `ControlValueProvider`. Whenever iOS reloads the control, WidgetKit rebuilds this
-/// body in the widget-extension process and reads the same atomic `SharedAppState`
-/// snapshot used by the rest of MisMeeter. That mirrors Apple's WWDC24 static-toggle
-/// pattern and avoids a second provider/cache layer.
+/// Apple expects a stateful ControlWidgetToggle to expose its current value through
+/// a `ControlValueProvider`. WidgetKit asks `currentValue()` whenever the control is
+/// rendered and again after its SetValueIntent finishes. The provider reads the same
+/// atomic App Group snapshot used by the app, widgets and Live Activity, so there is
+/// still a single source of truth and no Control-specific cache.
 @available(iOSApplicationExtension 18.0, *)
 struct MisMeeterMicrophoneMuteControl: ControlWidget {
-    var body: some ControlWidgetConfiguration {
-        let snapshot = SharedAppState.readSnapshot()
-        let active = snapshot.isStreaming
-        let muted = active && snapshot.isMuted
+    struct Provider: ControlValueProvider {
+        var previewValue: MisMeeterControlValue {
+            MisMeeterControlValue(isActive: false, isMuted: false)
+        }
 
-        return StaticControlConfiguration(kind: SharedControlStateStore.Kinds.microphone) {
+        func currentValue() async throws -> MisMeeterControlValue {
+            let snapshot = SharedAppState.readSnapshot()
+            return MisMeeterControlValue(
+                isActive: snapshot.isStreaming,
+                isMuted: snapshot.isMuted
+            )
+        }
+    }
+
+    var body: some ControlWidgetConfiguration {
+        StaticControlConfiguration(
+            kind: SharedControlStateStore.Kinds.microphone,
+            provider: Provider()
+        ) { value in
             ControlWidgetToggle(
                 "MisMeeter TX",
-                isOn: muted,
+                isOn: value.isMuted,
                 action: SetMicrophoneMuteControlIntent()
             ) { isMuted in
                 Label(
-                    active ? (isMuted ? "TX MUTED" : "TX ACTIVE") : "TX IDLE",
-                    systemImage: txSymbol(active: active, muted: active && isMuted)
+                    value.isActive ? (isMuted ? "TX MUTED" : "TX ACTIVE") : "TX IDLE",
+                    systemImage: txSymbol(
+                        active: value.isActive,
+                        muted: value.isActive && isMuted
+                    )
                 )
                 .controlWidgetStatus(
-                    active
+                    value.isActive
                         ? (isMuted ? "TX microphone muted" : "TX microphone active")
                         : "TX is not running"
                 )
                 .controlWidgetActionHint(
-                    active
+                    value.isActive
                         ? (isMuted ? "Unmute TX" : "Mute TX")
-                        : "No active TX session"
+                        : "Start TX in MisMeeter first"
                 )
             }
             // ON means muted, matching the native Silent Mode visual language.
             .tint(.red)
+            // A stale system surface must never be able to issue a meaningful mute
+            // command when the transport is not running. Runtime guards remain as a
+            // second line of defense for an interaction already in flight.
+            .disabled(!value.isActive)
         }
         .displayName("MisMeeter TX Mute")
         .description("Mute or unmute MisMeeter microphone transmission.")
@@ -52,33 +88,50 @@ struct MisMeeterMicrophoneMuteControl: ControlWidget {
 
 @available(iOSApplicationExtension 18.0, *)
 struct MisMeeterReceiveMuteControl: ControlWidget {
-    var body: some ControlWidgetConfiguration {
-        let snapshot = SharedAppState.readSnapshot()
-        let active = snapshot.isReceiving
-        let muted = active && snapshot.isReceiveMuted
+    struct Provider: ControlValueProvider {
+        var previewValue: MisMeeterControlValue {
+            MisMeeterControlValue(isActive: false, isMuted: false)
+        }
 
-        return StaticControlConfiguration(kind: SharedControlStateStore.Kinds.receive) {
+        func currentValue() async throws -> MisMeeterControlValue {
+            let snapshot = SharedAppState.readSnapshot()
+            return MisMeeterControlValue(
+                isActive: snapshot.isReceiving,
+                isMuted: snapshot.isReceiveMuted
+            )
+        }
+    }
+
+    var body: some ControlWidgetConfiguration {
+        StaticControlConfiguration(
+            kind: SharedControlStateStore.Kinds.receive,
+            provider: Provider()
+        ) { value in
             ControlWidgetToggle(
                 "MisMeeter RX",
-                isOn: muted,
+                isOn: value.isMuted,
                 action: SetReceiveMuteControlIntent()
             ) { isMuted in
                 Label(
-                    active ? (isMuted ? "RX MUTED" : "RX ACTIVE") : "RX IDLE",
-                    systemImage: rxSymbol(active: active, muted: active && isMuted)
+                    value.isActive ? (isMuted ? "RX MUTED" : "RX ACTIVE") : "RX IDLE",
+                    systemImage: rxSymbol(
+                        active: value.isActive,
+                        muted: value.isActive && isMuted
+                    )
                 )
                 .controlWidgetStatus(
-                    active
+                    value.isActive
                         ? (isMuted ? "RX audio muted" : "RX audio active")
                         : "RX is not running"
                 )
                 .controlWidgetActionHint(
-                    active
+                    value.isActive
                         ? (isMuted ? "Unmute RX" : "Mute RX")
-                        : "No active RX session"
+                        : "Start RX in MisMeeter first"
                 )
             }
             .tint(.red)
+            .disabled(!value.isActive)
         }
         .displayName("MisMeeter RX Mute")
         .description("Mute or unmute MisMeeter receive playback.")

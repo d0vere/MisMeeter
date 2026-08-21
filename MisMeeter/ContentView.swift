@@ -703,6 +703,9 @@ struct ContentView: View {
         }
         runtime.onVoiceProcessingState = { value in DispatchQueue.main.async { voiceProcessingActive = value } }
         runtime.onTransportMode = { _, _, _, gap in DispatchQueue.main.async { maxSendGapMS = gap } }
+        runtime.onTransportSnapshotChange = { _ in
+            DispatchQueue.main.async { reconcileRuntimeState() }
+        }
         runtime.onReceiverStatus = { value in
             DispatchQueue.main.async {
                 rxStatus = value

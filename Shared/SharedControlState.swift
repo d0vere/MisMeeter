@@ -5,14 +5,14 @@ import WidgetKit
 
 /// Shared identifiers and invalidation helpers for MisMeeter's iOS 18 system Controls.
 ///
-/// The Controls deliberately do NOT keep a second copy of transport state. Their
-/// visual value is derived directly from `SharedAppState`, the same atomic App Group
-/// snapshot used by the app/widget/Live Activity. This removes the split-state cache
-/// that existed in 4.0.1.
+/// Controls do not keep a second copy of transport state. Their ControlValueProvider
+/// reads `SharedAppState`, the same atomic App Group snapshot used by the app/widget/
+/// Live Activity. This preserves a single source of truth while using WidgetKit's
+/// documented state-provider lifecycle.
 enum SharedControlStateStore {
     enum Kinds {
         // Keep v4 kinds stable so existing Control Center / Lock Screen placements
-        // survive the 4.0.1 -> 4.0.2 update.
+        // survive the 4.0.x updates.
         static let receive = "dev.mismeeter.app.control.v4.receiveMute"
         static let microphone = "dev.mismeeter.app.control.v4.microphoneMute"
     }

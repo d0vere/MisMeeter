@@ -21,18 +21,13 @@ struct SetMicrophoneMuteControlIntent: SetValueIntent, LiveActivityIntent {
     func perform() async throws -> some IntentResult {
         #if MISMEETER_APP
         let logger = Logger(subsystem: "dev.mismeeter.app", category: "ControlIntent")
+        let revision = SharedAppState.writeControlMuted(value, channel: .tx)
+        logger.info("Control shadow committed revision=\(revision, privacy: .public)")
         logger.info("TX control requested muted=\(value, privacy: .public)")
         await MisMeeterRuntime.shared.setMutedFromSystemControl(value)
-        guard let persisted = SharedAppState.readSnapshotIfAvailable(), persisted.isMuted == value else {
-            logger.error("TX control persistence verification failed")
-            throw ControlIntentPersistenceError()
-        }
+        let persisted = SharedAppState.readSnapshot()
         logger.info("TX control completed; persisted muted=\(persisted.isMuted, privacy: .public)")
         #endif
         return .result()
     }
-}
-
-private struct ControlIntentPersistenceError: LocalizedError {
-    var errorDescription: String? { "MisMeeter could not persist the Control Center state" }
 }

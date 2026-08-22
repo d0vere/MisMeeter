@@ -342,6 +342,7 @@ final class MisMeeterRuntime {
             }
             guard let newValue else { return nil }
 
+            SharedAppState.writeControlMuted(newValue, channel: .tx)
             transmitter.setMuted(newValue)
             publishSharedState(
                 status: newValue ? "Microphone muted" : (isReceiving ? "Duplex live" : "Live")
@@ -377,6 +378,7 @@ final class MisMeeterRuntime {
             }
             guard let newValue else { return nil }
 
+            SharedAppState.writeControlMuted(newValue, channel: .rx)
             receiver.setOutputMuted(newValue)
             publishSharedState(
                 status: newValue ? "Receive muted" : (isStreaming ? "Duplex live" : "Listening")
@@ -449,6 +451,7 @@ final class MisMeeterRuntime {
             return false
         }
 
+        SharedAppState.writeControlMuted(value, channel: .tx)
         transmitter.setMuted(value)
         publishSharedState(
             status: value ? "Microphone muted" : (isReceiving ? "Duplex live" : "Live")
@@ -468,6 +471,7 @@ final class MisMeeterRuntime {
             return false
         }
 
+        SharedAppState.writeControlMuted(value, channel: .rx)
         receiver.setOutputMuted(value)
         publishSharedState(
             status: value ? "Receive muted" : (isStreaming ? "Duplex live" : "Listening")

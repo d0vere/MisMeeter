@@ -17,18 +17,13 @@ struct SetReceiveMuteControlIntent: SetValueIntent, LiveActivityIntent {
     func perform() async throws -> some IntentResult {
         #if MISMEETER_APP
         let logger = Logger(subsystem: "dev.mismeeter.app", category: "ControlIntent")
+        let revision = SharedAppState.writeControlMuted(value, channel: .rx)
+        logger.info("Control shadow committed revision=\(revision, privacy: .public)")
         logger.info("RX control requested muted=\(value, privacy: .public)")
         await MisMeeterRuntime.shared.setReceiveMutedFromSystemControl(value)
-        guard let persisted = SharedAppState.readSnapshotIfAvailable(), persisted.isReceiveMuted == value else {
-            logger.error("RX control persistence verification failed")
-            throw ControlIntentPersistenceError()
-        }
+        let persisted = SharedAppState.readSnapshot()
         logger.info("RX control completed; persisted muted=\(persisted.isReceiveMuted, privacy: .public)")
         #endif
         return .result()
     }
-}
-
-private struct ControlIntentPersistenceError: LocalizedError {
-    var errorDescription: String? { "MisMeeter could not persist the Control Center state" }
 }

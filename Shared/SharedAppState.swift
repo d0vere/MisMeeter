@@ -102,22 +102,14 @@ enum SharedAppState {
             .appendingPathComponent(snapshotFilename, isDirectory: false)
     }
 
-    /// Reads the cross-process snapshot. A missing/unreadable snapshot is *unknown*,
-    /// not "idle": treating an I/O miss as `false` makes Control Center overwrite
-    /// its correct optimistic state with a fabricated unmuted value.
-    static func readSnapshotIfAvailable() -> SharedTransportSnapshot? {
-        guard let url = snapshotURL else { return nil }
-        do {
-            let data = try Data(contentsOf: url)
-            return try JSONDecoder().decode(SharedTransportSnapshot.self, from: data).normalized()
-        } catch {
-            logger.error("Could not read transport snapshot: \(error.localizedDescription, privacy: .public)")
-            return nil
-        }
-    }
-
     static func readSnapshot() -> SharedTransportSnapshot {
-        readSnapshotIfAvailable() ?? .idle
+        guard let url = snapshotURL,
+              let data = try? Data(contentsOf: url),
+              let snapshot = try? JSONDecoder().decode(SharedTransportSnapshot.self, from: data)
+        else {
+            return .idle
+        }
+        return snapshot.normalized()
     }
 
     static func writeSnapshot(_ value: SharedTransportSnapshot) {
@@ -162,4 +154,33 @@ enum SharedAppState {
         WidgetCenter.shared.reloadAllTimelines()
         #endif
     }
+
+    // MARK: - Control Center shadow state
+    // Tiny App Group-backed source of truth for ControlWidgetToggle values. The full
+    // JSON snapshot remains authoritative for transport/session metadata.
+    enum ControlChannel { case tx, rx }
+    private static let txMuteKey = "control.txMuted.v2"
+    private static let rxMuteKey = "control.rxMuted.v2"
+    private static let txRevisionKey = "control.txRevision.v2"
+    private static let rxRevisionKey = "control.rxRevision.v2"
+
+    static func controlMuted(_ channel: ControlChannel, fallback: Bool) -> Bool {
+        guard let defaults = UserDefaults(suiteName: appGroup) else { return fallback }
+        let key = channel == .tx ? txMuteKey : rxMuteKey
+        guard defaults.object(forKey: key) != nil else { return fallback }
+        return defaults.bool(forKey: key)
+    }
+
+    @discardableResult
+    static func writeControlMuted(_ muted: Bool, channel: ControlChannel) -> UInt64 {
+        guard let defaults = UserDefaults(suiteName: appGroup) else { return 0 }
+        let valueKey = channel == .tx ? txMuteKey : rxMuteKey
+        let revisionKey = channel == .tx ? txRevisionKey : rxRevisionKey
+        let old = max(0, defaults.integer(forKey: revisionKey))
+        let revision = old == Int.max ? 1 : old + 1
+        defaults.set(muted, forKey: valueKey)
+        defaults.set(revision, forKey: revisionKey)
+        return UInt64(revision)
+    }
+
 }

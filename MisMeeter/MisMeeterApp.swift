@@ -8,10 +8,10 @@ final class MisMeeterAppDelegate: NSObject, UIApplicationDelegate {
         _ application: UIApplication,
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
     ) -> Bool {
-        // A new process cannot own a previous process's VBAN session. Publish the
-        // freshly-created runtime state and invalidate any cached highlighted control
-        // left by a prior termination before the main UI even appears.
-        MisMeeterRuntime.shared.refreshSystemControls()
+        // A LiveActivityIntent can launch this process in the background. Do not
+        // publish the newly-created runtime's default idle state here: that would
+        // overwrite the App Group snapshot before the Control intent completes.
+        MisMeeterRuntime.shared.invalidateSystemControlsOnly()
         return true
     }
 

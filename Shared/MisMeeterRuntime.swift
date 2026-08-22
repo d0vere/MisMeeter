@@ -135,7 +135,6 @@ final class MisMeeterRuntime {
             )
         }
 
-        publishSharedState(status: "Ready")
     }
 
     var isMuted: Bool { stateQueue.sync { _isMuted } }
@@ -383,6 +382,14 @@ final class MisMeeterRuntime {
 
     func refreshSystemControls() {
         publishSharedState(status: currentStatusText)
+        SharedControlStateStore.reloadAllConfiguredControls()
+    }
+
+    /// Invalidates cached Control Center templates without publishing runtime state.
+    /// Used during process launch because a LiveActivityIntent may launch the app in
+    /// the background. Publishing a new runtime's default idle state at that moment
+    /// would race the intent and make the system toggle snap back.
+    func invalidateSystemControlsOnly() {
         SharedControlStateStore.reloadAllConfiguredControls()
     }
 

@@ -1,4 +1,5 @@
 import AppIntents
+import os
 
 /// Native iOS 18 Control Center / Lock Screen toggle for TX mute.
 ///
@@ -19,7 +20,11 @@ struct SetMicrophoneMuteControlIntent: SetValueIntent, LiveActivityIntent {
 
     func perform() async throws -> some IntentResult {
         #if MISMEETER_APP
+        let logger = Logger(subsystem: "dev.mismeeter.app", category: "ControlIntent")
+        logger.info("TX control requested muted=\(value, privacy: .public)")
         await MisMeeterRuntime.shared.setMutedFromSystemControl(value)
+        let persisted = SharedAppState.readSnapshot()
+        logger.info("TX control completed; persisted muted=\(persisted.isMuted, privacy: .public)")
         #endif
         return .result()
     }

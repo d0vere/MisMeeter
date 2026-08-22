@@ -1,4 +1,5 @@
 import AppIntents
+import os
 
 /// Native iOS 18 Control Center / Lock Screen toggle for RX mute.
 /// See SetMicrophoneMuteControlIntent for the execution/state model.
@@ -15,7 +16,11 @@ struct SetReceiveMuteControlIntent: SetValueIntent, LiveActivityIntent {
 
     func perform() async throws -> some IntentResult {
         #if MISMEETER_APP
+        let logger = Logger(subsystem: "dev.mismeeter.app", category: "ControlIntent")
+        logger.info("RX control requested muted=\(value, privacy: .public)")
         await MisMeeterRuntime.shared.setReceiveMutedFromSystemControl(value)
+        let persisted = SharedAppState.readSnapshot()
+        logger.info("RX control completed; persisted muted=\(persisted.isReceiveMuted, privacy: .public)")
         #endif
         return .result()
     }

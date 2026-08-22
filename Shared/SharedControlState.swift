@@ -11,10 +11,10 @@ import WidgetKit
 /// documented state-provider lifecycle.
 enum SharedControlStateStore {
     enum Kinds {
-        // Keep v4 kinds stable so existing Control Center / Lock Screen placements
-        // survive the 4.0.x updates.
-        static let receive = "dev.mismeeter.app.control.v4.receiveMute"
-        static let microphone = "dev.mismeeter.app.control.v4.microphoneMute"
+        // R7 intentionally bumps the kind identity. Device tests proved the v4 controls
+        // can retain stale system templates/state across successive development builds.
+        static let receive = "dev.mismeeter.app.control.v5.receiveMute"
+        static let microphone = "dev.mismeeter.app.control.v5.microphoneMute"
     }
 
     #if canImport(WidgetKit)

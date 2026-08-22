@@ -155,32 +155,50 @@ enum SharedAppState {
         #endif
     }
 
-    // MARK: - Control Center shadow state
-    // Tiny App Group-backed source of truth for ControlWidgetToggle values. The full
-    // JSON snapshot remains authoritative for transport/session metadata.
+    // MARK: - Control Center state
+    // Dedicated atomic file: ControlValueProvider runs in another process, so this
+    // deliberately bypasses UserDefaults/CFPreferences process-local caching.
     enum ControlChannel { case tx, rx }
-    private static let txMuteKey = "control.txMuted.v2"
-    private static let rxMuteKey = "control.rxMuted.v2"
-    private static let txRevisionKey = "control.txRevision.v2"
-    private static let rxRevisionKey = "control.rxRevision.v2"
+    private struct ControlMuteState: Codable {
+        var txMuted: Bool; var rxMuted: Bool
+        var txRevision: UInt64; var rxRevision: UInt64
+    }
+    private static var controlStateURL: URL? {
+        FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroup)?
+            .appendingPathComponent("control-mute-state-v3.json", isDirectory: false)
+    }
+    private static let controlWriterLock = NSLock()
 
     static func controlMuted(_ channel: ControlChannel, fallback: Bool) -> Bool {
-        guard let defaults = UserDefaults(suiteName: appGroup) else { return fallback }
-        let key = channel == .tx ? txMuteKey : rxMuteKey
-        guard defaults.object(forKey: key) != nil else { return fallback }
-        return defaults.bool(forKey: key)
+        guard let url = controlStateURL, let data = try? Data(contentsOf: url),
+              let state = try? JSONDecoder().decode(ControlMuteState.self, from: data) else { return fallback }
+        return channel == .tx ? state.txMuted : state.rxMuted
     }
 
     @discardableResult
     static func writeControlMuted(_ muted: Bool, channel: ControlChannel) -> UInt64 {
-        guard let defaults = UserDefaults(suiteName: appGroup) else { return 0 }
-        let valueKey = channel == .tx ? txMuteKey : rxMuteKey
-        let revisionKey = channel == .tx ? txRevisionKey : rxRevisionKey
-        let old = max(0, defaults.integer(forKey: revisionKey))
-        let revision = old == Int.max ? 1 : old + 1
-        defaults.set(muted, forKey: valueKey)
-        defaults.set(revision, forKey: revisionKey)
-        return UInt64(revision)
+        guard let url = controlStateURL else { return 0 }
+        controlWriterLock.lock(); defer { controlWriterLock.unlock() }
+        var state: ControlMuteState
+        if let data = try? Data(contentsOf: url), let decoded = try? JSONDecoder().decode(ControlMuteState.self, from: data) {
+            state = decoded
+        } else {
+            let snapshot = readSnapshot()
+            state = ControlMuteState(txMuted: snapshot.isMuted, rxMuted: snapshot.isReceiveMuted, txRevision: 0, rxRevision: 0)
+        }
+        let revision: UInt64
+        switch channel {
+        case .tx: state.txMuted = muted; state.txRevision &+= 1; revision = state.txRevision
+        case .rx: state.rxMuted = muted; state.rxRevision &+= 1; revision = state.rxRevision
+        }
+        do {
+            let data = try JSONEncoder().encode(state)
+            try data.write(to: url, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+        } catch {
+            logger.error("Could not persist Control Center state: \(error.localizedDescription, privacy: .public)")
+            return 0
+        }
+        return revision
     }
 
 }

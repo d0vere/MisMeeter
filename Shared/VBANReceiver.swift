@@ -5,6 +5,7 @@ import os
 
 enum VBANReceiverError: LocalizedError {
     case socketCreation
+    case invalidPort
     case bindFailed(UInt16)
     case audioFormat
     case audioOutputUnavailable
@@ -13,6 +14,8 @@ enum VBANReceiverError: LocalizedError {
         switch self {
         case .socketCreation:
             return "Could not create the VBAN receive UDP socket."
+        case .invalidPort:
+            return "Use a valid receive UDP port between 1 and 65535."
         case .bindFailed(let port):
             return "Could not bind UDP port \(port). It may already be in use."
         case .audioFormat:
@@ -33,6 +36,10 @@ final class VBANReceiver {
         label: "dev.mismeeter.vban.rx.control",
         qos: .userInitiated
     )
+
+    private let networkQueueKey = DispatchSpecificKey<Void>()
+    private let controlQueueKey = DispatchSpecificKey<Void>()
+    private let logger = Logger(subsystem: "dev.mismeeter.app", category: "VBANReceiver")
 
     private let engine = AVAudioEngine()
     private var sourceNode: AVAudioSourceNode?
@@ -75,6 +82,7 @@ final class VBANReceiver {
     // Reused decode buffers: avoids two heap allocations for every VBAN packet.
     private var decodeLeft = [Float](repeating: 0, count: 256)
     private var decodeRight = [Float](repeating: 0, count: 256)
+    private var receivePacket = [UInt8](repeating: 0, count: 2048)
 
     private var packetsReceived: UInt64 = 0
     private var packetsRejected: UInt64 = 0
@@ -87,8 +95,6 @@ final class VBANReceiver {
 
     private(set) var isRunning = false
     private(set) var isOutputMuted = false
-
-    var onStatus: ((String) -> Void)?
 
     /// received, rejected, lost, bufferedFrames, underflows, primed, playbackRate, targetMS
     var onDiagnostics: ((
@@ -103,6 +109,8 @@ final class VBANReceiver {
     ) -> Void)?
 
     init() {
+        networkQueue.setSpecific(key: networkQueueKey, value: ())
+        controlQueue.setSpecific(key: controlQueueKey, value: ())
         installAudioObservers()
     }
 
@@ -117,6 +125,7 @@ final class VBANReceiver {
         transmitterAlreadyActive: Bool
     ) throws {
         stop(deactivateSession: false)
+        guard preset.port > 0 else { throw VBANReceiverError.invalidPort }
 
         expectedStreamName =
             preset.sanitizedStreamName
@@ -241,8 +250,16 @@ final class VBANReceiver {
         try engine.start()
 
         if transmitterAlreadyActive {
-            AudioSessionCoordinator.shared.forceSpeaker()
+            AudioSessionCoordinator.shared.preferBuiltInSpeakerIfNeeded()
         }
+
+        packetsReceived = 0
+        packetsRejected = 0
+        lastFrameCounter = nil
+        lostFrames = 0
+        lastUnderflowCount = 0
+        stableControlWindows = 0
+        currentRate = 1.0
 
         do {
             try openSocket()
@@ -255,21 +272,9 @@ final class VBANReceiver {
             throw error
         }
 
-        packetsReceived = 0
-        packetsRejected = 0
-        lastFrameCounter = nil
-        lostFrames = 0
-        lastUnderflowCount = 0
-        stableControlWindows = 0
-        currentRate = 1.0
-
         isRunning = true
-
         startClockRecovery()
 
-        onStatus?(
-            "Listening • \(expectedStreamName) • UDP \(listenPort)"
-        )
     }
 
     func stop(
@@ -279,19 +284,23 @@ final class VBANReceiver {
         isOutputMuted = false
         transmitterActiveForSession = false
 
-        controlTimer?.setEventHandler {}
-        controlTimer?.cancel()
-        controlTimer = nil
-
-        if let source = readSource {
-            source.setEventHandler {}
-            source.cancel()
-            readSource = nil
+        syncOnControlQueue {
+            controlTimer?.setEventHandler {}
+            controlTimer?.cancel()
+            controlTimer = nil
         }
 
-        if socketFD >= 0 {
-            Darwin.close(socketFD)
-            socketFD = -1
+        // Drain any in-flight socket handler before closing its descriptor. This
+        // prevents recv() from racing a close/reuse of the same file descriptor.
+        syncOnNetworkQueue {
+            readSource?.setEventHandler {}
+            readSource?.cancel()
+            readSource = nil
+
+            if socketFD >= 0 {
+                Darwin.close(socketFD)
+                socketFD = -1
+            }
         }
 
         engine.stop()
@@ -308,46 +317,42 @@ final class VBANReceiver {
             timePitch = nil
         }
 
-        ring.reset(
-            targetFrames:
-                frames(forMS: autoStartupTargetMS)
-        )
+        ring.reset(targetFrames: frames(forMS: autoStartupTargetMS))
 
         if deactivateSession {
-            AudioSessionCoordinator.shared
-                .deactivateIfPossible()
+            AudioSessionCoordinator.shared.deactivateIfPossible()
         }
-
-        onStatus?("Receiver stopped")
     }
 
 
     func setOutputMuted(_ muted: Bool) {
-        guard isRunning else {
-            isOutputMuted = false
-            return
+        syncOnControlQueue {
+            guard isRunning else {
+                isOutputMuted = false
+                return
+            }
+            isOutputMuted = muted
+            engine.mainMixerNode.outputVolume = muted ? 0.0 : 1.0
         }
-        isOutputMuted = muted
-        engine.mainMixerNode.outputVolume = muted ? 0.0 : 1.0
-        onStatus?(muted ? "Receive muted" : "Listening • \(expectedStreamName) • UDP \(listenPort)")
     }
 
-    /// Called when TX starts/stops while RX keeps running. Reasserting the
-    /// session and restarting a stopped engine prevents category transitions
-    /// from leaving a graph that still reports packets but produces no sound.
+    /// Called when TX starts/stops while RX keeps running. Session and engine
+    /// mutations are serialized on the receiver control queue.
     func refreshAudioSession(transmitterActive: Bool) {
-        guard isRunning else { return }
-        transmitterActiveForSession = transmitterActive
-        do {
-            try AudioSessionCoordinator.shared.ensureReceivePlayback(
-                transmitterActive: transmitterActive
-            )
-            if transmitterActive {
-                AudioSessionCoordinator.shared.forceSpeaker()
+        syncOnControlQueue {
+            guard isRunning else { return }
+            transmitterActiveForSession = transmitterActive
+            do {
+                try AudioSessionCoordinator.shared.ensureReceivePlayback(
+                    transmitterActive: transmitterActive
+                )
+                if transmitterActive {
+                    AudioSessionCoordinator.shared.preferBuiltInSpeakerIfNeeded()
+                }
+                recoverOutputEngineNow(forceRestart: true)
+            } catch {
+                logger.error("Audio output refresh failed: \(error.localizedDescription, privacy: .public)")
             }
-            recoverOutputEngineIfNeeded(forceRestart: true)
-        } catch {
-            onStatus?("Audio output error • \(error.localizedDescription)")
         }
     }
 
@@ -357,8 +362,6 @@ final class VBANReceiver {
             object: engine,
             queue: nil
         ) { [weak self] _ in
-            // Apple stops/uninitializes the engine before posting this notification.
-            // The nodes stay attached, so restarting the existing graph is sufficient.
             self?.recoverOutputEngineIfNeeded(forceRestart: false)
         }
 
@@ -367,18 +370,20 @@ final class VBANReceiver {
             object: nil,
             queue: nil
         ) { [weak self] _ in
-            guard let self, self.isRunning else { return }
-            do {
-                try AudioSessionCoordinator.shared.ensureReceivePlayback(
-                    transmitterActive: self.transmitterActiveForSession
-                )
-                if self.transmitterActiveForSession {
-                    AudioSessionCoordinator.shared.forceSpeaker()
+            self?.controlQueue.async { [weak self] in
+                guard let self, self.isRunning else { return }
+                do {
+                    try AudioSessionCoordinator.shared.ensureReceivePlayback(
+                        transmitterActive: self.transmitterActiveForSession
+                    )
+                    if self.transmitterActiveForSession {
+                        AudioSessionCoordinator.shared.preferBuiltInSpeakerIfNeeded()
+                    }
+                    self.recoverOutputEngineNow(forceRestart: false)
+                } catch {
+                    self.logger.error("Audio route recovery failed: \(error.localizedDescription, privacy: .public)")
                 }
-            } catch {
-                self.onStatus?("Audio route error • \(error.localizedDescription)")
             }
-            self.recoverOutputEngineIfNeeded(forceRestart: false)
         }
 
         interruptionObserver = NotificationCenter.default.addObserver(
@@ -386,37 +391,45 @@ final class VBANReceiver {
             object: nil,
             queue: nil
         ) { [weak self] note in
-            guard let self, self.isRunning,
-                  let raw = note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
+            guard let raw = note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
                   let type = AVAudioSession.InterruptionType(rawValue: raw),
-                  type == .ended else { return }
-            do {
-                try AudioSessionCoordinator.shared.ensureReceivePlayback(
-                    transmitterActive: self.transmitterActiveForSession
-                )
-            } catch {
-                self.onStatus?("Audio resume error • \(error.localizedDescription)")
+                  type == .ended else {
+                return
             }
-            self.recoverOutputEngineIfNeeded(forceRestart: true)
+            self?.controlQueue.async { [weak self] in
+                guard let self, self.isRunning else { return }
+                do {
+                    try AudioSessionCoordinator.shared.ensureReceivePlayback(
+                        transmitterActive: self.transmitterActiveForSession
+                    )
+                    self.recoverOutputEngineNow(forceRestart: true)
+                } catch {
+                    self.logger.error("Audio interruption recovery failed: \(error.localizedDescription, privacy: .public)")
+                }
+            }
         }
     }
 
     private func recoverOutputEngineIfNeeded(forceRestart: Bool) {
-        guard isRunning, sourceNode != nil else { return }
         controlQueue.async { [weak self] in
-            guard let self, self.isRunning else { return }
-            do {
-                if forceRestart && self.engine.isRunning {
-                    self.engine.stop()
-                }
-                if !self.engine.isRunning {
-                    self.engine.prepare()
-                    try self.engine.start()
-                }
-                self.engine.mainMixerNode.outputVolume = self.isOutputMuted ? 0.0 : 1.0
-            } catch {
-                self.onStatus?("Audio engine error • \(error.localizedDescription)")
+            guard let self else { return }
+            self.recoverOutputEngineNow(forceRestart: forceRestart)
+        }
+    }
+
+    private func recoverOutputEngineNow(forceRestart: Bool) {
+        guard isRunning, sourceNode != nil else { return }
+        do {
+            if forceRestart && engine.isRunning {
+                engine.stop()
             }
+            if !engine.isRunning {
+                engine.prepare()
+                try engine.start()
+            }
+            engine.mainMixerNode.outputVolume = isOutputMuted ? 0.0 : 1.0
+        } catch {
+            logger.error("Audio engine restart failed: \(error.localizedDescription, privacy: .public)")
         }
     }
 
@@ -467,9 +480,7 @@ final class VBANReceiver {
 
         currentRate = currentRate * 0.82 + desiredRate * 0.18
 
-        DispatchQueue.main.async { [weak self] in
-            self?.timePitch?.rate = self?.currentRate ?? 1.0
-        }
+        timePitch?.rate = currentRate
 
         let hadNewUnderflow = stats.underflows != lastUnderflowCount
         var allowTargetDecrease = false
@@ -549,32 +560,37 @@ final class VBANReceiver {
         let packetMS = Double(sampleCount) / VBANPacket.sampleRate * 1000.0
 
         arrivalJitter.withLock { state in
-            defer {
-                state.lastArrivalNS = now
-                state.lastFrameCounter = frame
-            }
-
             guard let previousNS = state.lastArrivalNS,
                   let previousFrame = state.lastFrameCounter else {
+                state.lastArrivalNS = now
+                state.lastFrameCounter = frame
                 return
             }
 
             let frameDistance = frame &- previousFrame
-            guard frameDistance > 0, frameDistance < 1_000 else {
+            // Values in the upper half of UInt32 represent an older/out-of-order
+            // frame when interpreted with normal wrapping sequence arithmetic.
+            guard frameDistance > 0, frameDistance < 0x8000_0000 else {
                 return
             }
 
-            let actualMS = Double(now - previousNS) / 1_000_000.0
-            let expectedMS = packetMS * Double(frameDistance)
-            let deviationMS = min(abs(actualMS - expectedMS), 50.0)
+            if frameDistance < 1_000 {
+                let actualMS = Double(now - previousNS) / 1_000_000.0
+                let expectedMS = packetMS * Double(frameDistance)
+                let deviationMS = min(abs(actualMS - expectedMS), 50.0)
 
-            // RFC3550-style smoothing, plus a decaying short-term peak for burst jitter.
-            state.smoothedDeviationMS +=
-                (deviationMS - state.smoothedDeviationMS) / 16.0
-            state.peakDeviationMS = max(
-                deviationMS,
-                state.peakDeviationMS * 0.94
-            )
+                // RFC3550-style smoothing, plus a decaying short-term peak.
+                state.smoothedDeviationMS +=
+                    (deviationMS - state.smoothedDeviationMS) / 16.0
+                state.peakDeviationMS = max(
+                    deviationMS,
+                    state.peakDeviationMS * 0.94
+                )
+            }
+
+            // A large forward jump becomes the new baseline without polluting jitter.
+            state.lastArrivalNS = now
+            state.lastFrameCounter = frame
         }
     }
 
@@ -633,18 +649,10 @@ final class VBANReceiver {
             )
         }
 
-        let flags =
-            fcntl(
-                fd,
-                F_GETFL,
-                0
-            )
-
-        _ = fcntl(
-            fd,
-            F_SETFL,
-            flags | O_NONBLOCK
-        )
+        let flags = fcntl(fd, F_GETFL, 0)
+        if flags >= 0 {
+            _ = fcntl(fd, F_SETFL, flags | O_NONBLOCK)
+        }
 
         var address =
             sockaddr_in()
@@ -709,53 +717,36 @@ final class VBANReceiver {
             self?.drainSocket()
         }
 
-        source.setCancelHandler {}
-
         readSource = source
         source.resume()
     }
 
     private func drainSocket() {
-        guard socketFD >= 0 else {
-            return
-        }
+        guard socketFD >= 0 else { return }
 
-        var packet =
-            [UInt8](
-                repeating: 0,
-                count: 2048
-            )
+        let capacity = receivePacket.count
+        var processedPackets = 0
+        let maxPacketsPerWake = 256
 
-        let capacity =
-            packet.count
-
-        while true {
-            let count =
-                packet
-                    .withUnsafeMutableBytes {
-                        buffer in
-
-                        Darwin.recv(
-                            socketFD,
-                            buffer.baseAddress,
-                            capacity,
-                            0
-                        )
-                    }
+        while processedPackets < maxPacketsPerWake {
+            let count = receivePacket.withUnsafeMutableBytes { buffer in
+                Darwin.recv(
+                    socketFD,
+                    buffer.baseAddress,
+                    capacity,
+                    0
+                )
+            }
 
             if count <= 0 {
-                if errno == EAGAIN ||
-                    errno == EWOULDBLOCK {
+                if errno == EAGAIN || errno == EWOULDBLOCK {
                     break
                 }
-
                 break
             }
 
-            parsePacket(
-                packet,
-                count: count
-            )
+            parsePacket(receivePacket, count: count)
+            processedPackets += 1
         }
     }
 
@@ -778,8 +769,8 @@ final class VBANReceiver {
             return
         }
 
-        let sampleRateIndex =
-            bytes[4] & 0x1F
+        let protocolBits = bytes[4] & 0xE0
+        let sampleRateIndex = bytes[4] & 0x1F
 
         let sampleCount =
             Int(bytes[5]) + 1
@@ -787,13 +778,12 @@ final class VBANReceiver {
         let channels =
             Int(bytes[6]) + 1
 
-        let dataType =
-            bytes[7] & 0x07
+        let formatByte = bytes[7]
 
         guard
-            sampleRateIndex ==
-                VBANPacket.sampleRateIndex,
-            dataType == 1,
+            protocolBits == 0,
+            sampleRateIndex == VBANPacket.sampleRateIndex,
+            formatByte == 0x01,
             channels == 1 ||
                 channels == 2,
             sampleCount > 0 &&
@@ -841,23 +831,10 @@ final class VBANReceiver {
             UInt32(bytes[26]) << 16 |
             UInt32(bytes[27]) << 24
 
-        if let previous =
-            lastFrameCounter {
-            let expected =
-                previous &+ 1
-
-            if frame != expected {
-                let delta =
-                    frame &- expected
-
-                if delta < 10_000 {
-                    lostFrames &+=
-                        UInt64(delta)
-                }
-            }
+        guard acceptFrame(frame) else {
+            packetsRejected &+= 1
+            return
         }
-
-        lastFrameCounter = frame
         recordPacketArrival(frame: frame, sampleCount: sampleCount)
 
         var offset = 28
@@ -895,6 +872,26 @@ final class VBANReceiver {
         packetsReceived &+= 1
     }
 
+    /// Accepts monotonic frame counters with UInt32 wrap-around and rejects
+    /// duplicates/out-of-order packets so stale PCM never enters the jitter buffer.
+    private func acceptFrame(_ frame: UInt32) -> Bool {
+        guard let previous = lastFrameCounter else {
+            lastFrameCounter = frame
+            return true
+        }
+
+        let distance = frame &- previous
+        guard distance > 0, distance < 0x8000_0000 else {
+            return false
+        }
+
+        if distance > 1, distance < 10_000 {
+            lostFrames &+= UInt64(distance - 1)
+        }
+        lastFrameCounter = frame
+        return true
+    }
+
     /// Called on networkQueue so packet counters and frame-loss accounting are read
     /// on the same serial queue that mutates them. Rate/target are captured by the
     /// control queue and passed by value to avoid cross-queue data races.
@@ -914,5 +911,21 @@ final class VBANReceiver {
             playbackRate,
             targetMS
         )
+    }
+
+    private func syncOnNetworkQueue(_ body: () -> Void) {
+        if DispatchQueue.getSpecific(key: networkQueueKey) != nil {
+            body()
+        } else {
+            networkQueue.sync(execute: body)
+        }
+    }
+
+    private func syncOnControlQueue(_ body: () -> Void) {
+        if DispatchQueue.getSpecific(key: controlQueueKey) != nil {
+            body()
+        } else {
+            controlQueue.sync(execute: body)
+        }
     }
 }

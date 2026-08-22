@@ -1,5 +1,3 @@
-import Foundation
-
 enum CaptureMode: Int, CaseIterable, Identifiable {
     case remoteIORaw = 0
     case voiceProcessingIO = 1

@@ -42,12 +42,10 @@ targets:
       - path: Shared/SetReceiveMuteControlIntent.swift
       - path: Shared/ToggleMuteIntent.swift
       - path: Shared/ToggleReceiveMuteIntent.swift
-      - path: Shared/TransportState.swift
       - path: Shared/VBANPacket.swift
       - path: Shared/VBANPreset.swift
       - path: Shared/VBANReceivePreset.swift
       - path: Shared/VBANReceiver.swift
-      - path: Shared/VBANTransmissionMode.swift
       - path: Shared/VBANTransmitter.swift
     info:
       path: MisMeeter/Generated-Info.plist

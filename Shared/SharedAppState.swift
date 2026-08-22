@@ -90,12 +90,10 @@ enum SharedAppState {
     /// split-brain failure mode when the two caches advanced at different times.
     private static let snapshotFilename = "transport-state-v4.json"
 
-    private struct WriterState: Sendable {
-        var writes: UInt64 = 0
-    }
-
-    private static let writerLock = OSAllocatedUnfairLock(
-        initialState: WriterState()
+    private static let writerLock = NSLock()
+    private static let logger = Logger(
+        subsystem: "dev.mismeeter.app",
+        category: "SharedState"
     )
 
     private static var snapshotURL: URL? {
@@ -114,33 +112,39 @@ enum SharedAppState {
         return snapshot.normalized()
     }
 
-    static func writeSnapshot(_ value: SharedTransportSnapshot, reloadWidgets: Bool = true) {
+    static func writeSnapshot(_ value: SharedTransportSnapshot) {
         var published = value.normalized()
         published.publishedAt = Date()
 
-        guard let url = snapshotURL,
-              let data = try? JSONEncoder().encode(published)
-        else {
+        guard let url = snapshotURL else {
+            logger.error("App Group container is unavailable")
             return
         }
 
-        writerLock.withLock { writer in
-            do {
-                try data.write(
-                    to: url,
-                    options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication]
-                )
-                try? FileManager.default.setAttributes(
-                    [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication],
-                    ofItemAtPath: url.path
-                )
-                writer.writes &+= 1
-            } catch {
-                // An atomic write failure leaves the last complete snapshot intact.
-            }
+        let data: Data
+        do {
+            data = try JSONEncoder().encode(published)
+        } catch {
+            logger.error("Could not encode transport snapshot: \(error.localizedDescription, privacy: .public)")
+            return
         }
 
-        guard reloadWidgets else { return }
+        writerLock.lock()
+        defer { writerLock.unlock() }
+        do {
+            try data.write(
+                to: url,
+                options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication]
+            )
+            try? FileManager.default.setAttributes(
+                [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication],
+                ofItemAtPath: url.path
+            )
+        } catch {
+            // Atomic writes preserve the last complete snapshot on failure.
+            logger.error("Could not persist transport snapshot: \(error.localizedDescription, privacy: .public)")
+            return
+        }
 
         #if canImport(WidgetKit)
         // Control Center is intentionally NOT reloaded here. A Control interaction

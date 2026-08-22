@@ -20,7 +20,6 @@ struct ContentView: View {
 
     @AppStorage("microphoneGainDB") private var gainDB = 12.0
     @AppStorage("captureModeV21") private var captureModeRaw = CaptureMode.voiceProcessingIO.rawValue
-    @AppStorage("transmissionModeV08") private var transmissionModeRaw = VBANTransmissionMode.automatic.rawValue
 
     @AppStorage("selectedRXPreset") private var selectedRXPreset = 0
     @AppStorage("rx1Name") private var rx1Name = "Main"
@@ -37,8 +36,6 @@ struct ContentView: View {
     @State private var isMuted = MisMeeterRuntime.shared.isMuted
     @State private var isReceiving = MisMeeterRuntime.shared.isReceiving
     @State private var isReceiveMuted = MisMeeterRuntime.shared.isReceiveMuted
-    @State private var txStatus = "Ready"
-    @State private var rxStatus = "Ready"
     @State private var meter: Float = 0
     @State private var packetsSent: UInt64 = 0
     @State private var sendErrors: UInt64 = 0
@@ -85,6 +82,7 @@ struct ContentView: View {
         }
         .tint(.accentColor)
         .onAppear {
+            normalizeStoredSettings()
             wireRuntimeCallbacks()
             MisMeeterRuntime.shared.gainDB = Float(gainDB)
             reconcileRuntimeState()
@@ -93,14 +91,12 @@ struct ContentView: View {
                 await MisMeeterRuntime.shared.cleanupOrphanedLiveActivitiesIfIdle()
                 await MainActor.run { reconcileRuntimeState() }
             }
-            updateScenePhase(scenePhase)
         }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active {
                 reconcileRuntimeState()
                 MisMeeterRuntime.shared.refreshSystemControls()
             }
-            updateScenePhase(phase)
         }
         .onOpenURL { _ in
             reconcileRuntimeState()
@@ -160,8 +156,8 @@ struct ContentView: View {
                 heroCard
                 audioLevelCard
                 HStack(spacing: 12) {
-                    compactStatusCard(title: "TX", value: txStatus, icon: "arrow.up.circle.fill", active: isStreaming)
-                    compactStatusCard(title: "RX", value: rxStatus, icon: "arrow.down.circle.fill", active: isReceiving)
+                    compactStatusCard(title: "TX", value: txStatusText, icon: "arrow.up.circle.fill", active: isStreaming)
+                    compactStatusCard(title: "RX", value: rxStatusText, icon: "arrow.down.circle.fill", active: isReceiving)
                 }
                 sendControlsCard
                 sendQualityCard
@@ -179,7 +175,7 @@ struct ContentView: View {
                 VStack(alignment: .leading, spacing: 5) {
                     Text(isStreaming ? (isMuted ? "Microphone muted" : "On air") : "Ready to connect")
                         .font(.title2.weight(.bold))
-                    Text(currentTXPreset.destinationLabel)
+                    Text(displayedTXPreset.destinationLabel)
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
@@ -356,7 +352,7 @@ struct ContentView: View {
                 VStack(alignment: .leading, spacing: 5) {
                     Text(isReceiving ? (isReceiveMuted ? "Receive muted" : "Listening") : "Ready to listen")
                         .font(.title2.weight(.bold))
-                    Text("\(currentRXPreset.name) · \(currentRXPreset.streamName)")
+                    Text("\(displayedRXPreset.name) · \(displayedRXPreset.streamName)")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
@@ -569,7 +565,7 @@ struct ContentView: View {
                 metric("Callback", "\(callbackFrames) frames")
                 metric("I/O buffer", String(format: "%.2f ms", actualIOBufferMS))
                 metric("Max callback gap", String(format: "%.2f ms", maxCaptureGapMS))
-                metric("Voice processing", voiceProcessingActive ? "Active" : "Raw RemoteIO")
+                metric("Voice processing", isStreaming ? (voiceProcessingActive ? "Active" : "Raw RemoteIO") : "Idle")
                 metric("TX clock", "Audio callback")
             }
 
@@ -591,7 +587,7 @@ struct ContentView: View {
             }
 
             Section("About") {
-                LabeledContent("Version", value: "3.2.3")
+                LabeledContent("Version", value: appVersion)
                 LabeledContent("Audio", value: "48 kHz / PCM16 / VBAN")
                 LabeledContent("Minimum iOS", value: "18.5")
                 LabeledContent("Toolchain", value: "Xcode 16.4 · iOS SDK 18.5")
@@ -619,17 +615,32 @@ struct ContentView: View {
     }
 
     private func startTX() async {
-        let preset = currentTXPreset
+        guard let port = validatedUDPPort(txPortBinding.wrappedValue) else {
+            alertMessage = "Enter a valid TX UDP port between 1 and 65535."
+            selectedTab = .presets
+            return
+        }
+
+        var preset = currentTXPreset
+        preset.port = port
         guard !preset.host.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             alertMessage = "Enter the VoiceMeeter destination IPv4 address first."
             selectedTab = .presets
             return
         }
+
+        let microphoneGranted = await AVAudioApplication.requestRecordPermission()
+        guard microphoneGranted else {
+            await MainActor.run {
+                alertMessage = "Microphone access is required to transmit audio. Enable it in Settings and try again."
+            }
+            return
+        }
+
         do {
             try await MisMeeterRuntime.shared.start(
                 preset: preset,
                 gainDB: Float(gainDB),
-                transmissionMode: VBANTransmissionMode(rawValue: transmissionModeRaw) ?? .automatic,
                 captureMode: CaptureMode(rawValue: captureModeRaw) ?? .voiceProcessingIO
             )
             await MainActor.run { reconcileRuntimeState() }
@@ -647,8 +658,16 @@ struct ContentView: View {
     }
 
     private func startRX() {
+        guard let port = validatedUDPPort(rxPortBinding.wrappedValue) else {
+            alertMessage = "Enter a valid RX UDP port between 1 and 65535."
+            selectedTab = .presets
+            return
+        }
+
+        var preset = currentRXPreset
+        preset.port = port
         do {
-            try MisMeeterRuntime.shared.startReceiving(preset: currentRXPreset)
+            try MisMeeterRuntime.shared.startReceiving(preset: preset)
             reconcileRuntimeState()
         } catch {
             alertMessage = error.localizedDescription
@@ -662,88 +681,100 @@ struct ContentView: View {
 
     private func reconcileRuntimeState() {
         let runtime = MisMeeterRuntime.shared
-
         isStreaming = runtime.isStreaming
         isMuted = runtime.isStreaming ? runtime.isMuted : false
         isReceiving = runtime.isReceiving
         isReceiveMuted = runtime.isReceiving ? runtime.isReceiveMuted : false
         meter = runtime.isStreaming ? meter : 0
-
-        if runtime.isStreaming {
-            txStatus = runtime.isMuted ? "Muted" : "Live"
-        } else {
-            txStatus = "Ready"
-        }
-
-        if runtime.isReceiving {
-            rxStatus = runtime.isReceiveMuted ? "Receive muted" : "Listening"
-        } else {
-            rxStatus = "Ready"
-        }
-
+        if !runtime.isStreaming { voiceProcessingActive = false }
     }
 
     private func wireRuntimeCallbacks() {
         let runtime = MisMeeterRuntime.shared
-        runtime.onStatusChange = { value in
+        runtime.onMicrophoneDiagnostics = { meterValue, frames, duration, gap in
             DispatchQueue.main.async {
-                txStatus = value
-                reconcileRuntimeState()
+                meter = meterValue
+                callbackFrames = frames
+                actualIOBufferMS = duration * 1000
+                maxCaptureGapMS = gap
             }
         }
-        runtime.onMeter = { value in DispatchQueue.main.async { meter = value } }
-        runtime.onPacketsSent = { value in DispatchQueue.main.async { packetsSent = value } }
-        runtime.onUnderruns = { value in DispatchQueue.main.async { sendErrors = value } }
-        runtime.onAudioDiagnostics = { frames, duration in
-            DispatchQueue.main.async { callbackFrames = frames; actualIOBufferMS = duration * 1000 }
+        runtime.onTransmitterDiagnostics = { sent, errors, captureRate, transmittedRate, sendGap in
+            DispatchQueue.main.async {
+                packetsSent = sent
+                sendErrors = errors
+                measuredCaptureHz = captureRate
+                effectiveTXHz = transmittedRate
+                maxSendGapMS = sendGap
+            }
         }
-        runtime.onCaptureGap = { value in DispatchQueue.main.async { maxCaptureGapMS = value } }
-        runtime.onPLLStats = { _, capture, tx, _, _ in
-            DispatchQueue.main.async { measuredCaptureHz = capture; effectiveTXHz = tx }
+        runtime.onVoiceProcessingState = { value in
+            DispatchQueue.main.async { voiceProcessingActive = value }
         }
-        runtime.onVoiceProcessingState = { value in DispatchQueue.main.async { voiceProcessingActive = value } }
-        runtime.onTransportMode = { _, _, _, gap in DispatchQueue.main.async { maxSendGapMS = gap } }
         runtime.onTransportSnapshotChange = { _ in
             DispatchQueue.main.async { reconcileRuntimeState() }
         }
-        runtime.onReceiverStatus = { value in
-            DispatchQueue.main.async {
-                rxStatus = value
-                reconcileRuntimeState()
-            }
-        }
         runtime.onReceiverDiagnostics = { received, _, lost, buffered, underflows, _, rate, target in
             DispatchQueue.main.async {
-                rxPackets = received; rxLost = lost; rxBufferedFrames = buffered
-                rxUnderflows = underflows; rxPlaybackRate = rate; rxAdaptiveTargetMS = target
+                rxPackets = received
+                rxLost = lost
+                rxBufferedFrames = buffered
+                rxUnderflows = underflows
+                rxPlaybackRate = rate
+                rxAdaptiveTargetMS = target
             }
         }
     }
 
-    private func updateScenePhase(_ phase: ScenePhase) {
-        guard MisMeeterRuntime.shared.isStreaming else { return }
-        switch phase {
-        case .active: MisMeeterRuntime.shared.enterForegroundTransport()
-        case .inactive: MisMeeterRuntime.shared.beginLockTransition()
-        case .background: MisMeeterRuntime.shared.enterBackgroundTransport()
-        @unknown default: break
+    private func normalizeStoredSettings() {
+        selectedTXPreset = min(max(selectedTXPreset, 0), 2)
+        selectedRXPreset = min(max(selectedRXPreset, 0), 2)
+        if CaptureMode(rawValue: captureModeRaw) == nil {
+            captureModeRaw = CaptureMode.voiceProcessingIO.rawValue
         }
+    }
+
+    private func validatedUDPPort(_ value: String) -> UInt16? {
+        guard let port = UInt16(value.trimmingCharacters(in: .whitespacesAndNewlines)), port > 0 else {
+            return nil
+        }
+        return port
     }
 
     private var currentTXPreset: VBANPreset {
         switch selectedTXPreset {
-        case 1: return VBANPreset(name: p2Name, host: p2Host, port: UInt16(Int(p2Port) ?? 6980), streamName: p2Stream)
-        case 2: return VBANPreset(name: p3Name, host: p3Host, port: UInt16(Int(p3Port) ?? 6980), streamName: p3Stream)
-        default: return VBANPreset(name: p1Name, host: p1Host, port: UInt16(Int(p1Port) ?? 6980), streamName: p1Stream)
+        case 1: return VBANPreset(name: p2Name, host: p2Host, port: validatedUDPPort(p2Port) ?? 6980, streamName: p2Stream)
+        case 2: return VBANPreset(name: p3Name, host: p3Host, port: validatedUDPPort(p3Port) ?? 6980, streamName: p3Stream)
+        default: return VBANPreset(name: p1Name, host: p1Host, port: validatedUDPPort(p1Port) ?? 6980, streamName: p1Stream)
         }
     }
 
     private var currentRXPreset: VBANReceivePreset {
         switch selectedRXPreset {
-        case 1: return VBANReceivePreset(name: rx2Name, port: UInt16(Int(rx2Port) ?? 6980), streamName: rx2Stream)
-        case 2: return VBANReceivePreset(name: rx3Name, port: UInt16(Int(rx3Port) ?? 6980), streamName: rx3Stream)
-        default: return VBANReceivePreset(name: rx1Name, port: UInt16(Int(rx1Port) ?? 6980), streamName: rx1Stream)
+        case 1: return VBANReceivePreset(name: rx2Name, port: validatedUDPPort(rx2Port) ?? 6980, streamName: rx2Stream)
+        case 2: return VBANReceivePreset(name: rx3Name, port: validatedUDPPort(rx3Port) ?? 6980, streamName: rx3Stream)
+        default: return VBANReceivePreset(name: rx1Name, port: validatedUDPPort(rx1Port) ?? 6980, streamName: rx1Stream)
         }
+    }
+
+    private var displayedTXPreset: VBANPreset {
+        isStreaming ? MisMeeterRuntime.shared.activePreset : currentTXPreset
+    }
+
+    private var displayedRXPreset: VBANReceivePreset {
+        isReceiving ? MisMeeterRuntime.shared.activeReceivePreset : currentRXPreset
+    }
+
+    private var txStatusText: String {
+        isStreaming ? (isMuted ? "Muted" : "Live") : "Ready"
+    }
+
+    private var rxStatusText: String {
+        isReceiving ? (isReceiveMuted ? "Receive muted" : "Listening") : "Ready"
+    }
+
+    private var appVersion: String {
+        (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String) ?? "4.0.4"
     }
 
     private var txNameBinding: Binding<String> { selectedTXPreset == 1 ? $p2Name : (selectedTXPreset == 2 ? $p3Name : $p1Name) }

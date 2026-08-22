@@ -102,14 +102,22 @@ enum SharedAppState {
             .appendingPathComponent(snapshotFilename, isDirectory: false)
     }
 
-    static func readSnapshot() -> SharedTransportSnapshot {
-        guard let url = snapshotURL,
-              let data = try? Data(contentsOf: url),
-              let snapshot = try? JSONDecoder().decode(SharedTransportSnapshot.self, from: data)
-        else {
-            return .idle
+    /// Reads the cross-process snapshot. A missing/unreadable snapshot is *unknown*,
+    /// not "idle": treating an I/O miss as `false` makes Control Center overwrite
+    /// its correct optimistic state with a fabricated unmuted value.
+    static func readSnapshotIfAvailable() -> SharedTransportSnapshot? {
+        guard let url = snapshotURL else { return nil }
+        do {
+            let data = try Data(contentsOf: url)
+            return try JSONDecoder().decode(SharedTransportSnapshot.self, from: data).normalized()
+        } catch {
+            logger.error("Could not read transport snapshot: \(error.localizedDescription, privacy: .public)")
+            return nil
         }
-        return snapshot.normalized()
+    }
+
+    static func readSnapshot() -> SharedTransportSnapshot {
+        readSnapshotIfAvailable() ?? .idle
     }
 
     static func writeSnapshot(_ value: SharedTransportSnapshot) {

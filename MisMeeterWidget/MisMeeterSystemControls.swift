@@ -27,16 +27,13 @@ struct MisMeeterControlValue: Hashable, Sendable {
 @available(iOSApplicationExtension 18.0, *)
 struct MisMeeterMicrophoneMuteControl: ControlWidget {
     struct Provider: ControlValueProvider {
-        var previewValue: MisMeeterControlValue {
-            MisMeeterControlValue(isActive: false, isMuted: false)
-        }
+        let previewValue = false
 
-        func currentValue() async throws -> MisMeeterControlValue {
-            let snapshot = SharedAppState.readSnapshot()
-            return MisMeeterControlValue(
-                isActive: snapshot.isStreaming,
-                isMuted: snapshot.isMuted
-            )
+        func currentValue() async throws -> Bool {
+            guard let snapshot = SharedAppState.readSnapshotIfAvailable() else {
+                throw ControlStateUnavailable()
+            }
+            return snapshot.isMuted
         }
     }
 
@@ -44,56 +41,36 @@ struct MisMeeterMicrophoneMuteControl: ControlWidget {
         StaticControlConfiguration(
             kind: SharedControlStateStore.Kinds.microphone,
             provider: Provider()
-        ) { value in
+        ) { isMuted in
             ControlWidgetToggle(
                 "MisMeeter TX",
-                isOn: value.isMuted,
+                isOn: isMuted,
                 action: SetMicrophoneMuteControlIntent()
-            ) { isMuted in
+            ) { muted in
                 Label(
-                    value.isActive ? (isMuted ? "TX MUTED" : "TX ACTIVE") : "TX IDLE",
-                    systemImage: txSymbol(
-                        active: value.isActive,
-                        muted: value.isActive && isMuted
-                    )
+                    muted ? "TX MUTED" : "TX ACTIVE",
+                    systemImage: muted ? "mic.slash.fill" : "mic.fill"
                 )
-                .controlWidgetStatus(
-                    value.isActive
-                        ? (isMuted ? "TX microphone muted" : "TX microphone active")
-                        : "TX is not running"
-                )
-                .controlWidgetActionHint(
-                    value.isActive
-                        ? (isMuted ? "Unmute TX" : "Mute TX")
-                        : "Start TX in MisMeeter first"
-                )
+                .controlWidgetStatus(muted ? "TX microphone muted" : "TX microphone active")
+                .controlWidgetActionHint(muted ? "Unmute TX" : "Mute TX")
             }
-            // ON means muted, matching the native Silent Mode visual language.
             .tint(.red)
         }
         .displayName("MisMeeter TX Mute")
         .description("Mute or unmute MisMeeter microphone transmission.")
-    }
-
-    private func txSymbol(active: Bool, muted: Bool) -> String {
-        guard active else { return "mic" }
-        return muted ? "mic.slash.fill" : "mic.fill"
     }
 }
 
 @available(iOSApplicationExtension 18.0, *)
 struct MisMeeterReceiveMuteControl: ControlWidget {
     struct Provider: ControlValueProvider {
-        var previewValue: MisMeeterControlValue {
-            MisMeeterControlValue(isActive: false, isMuted: false)
-        }
+        let previewValue = false
 
-        func currentValue() async throws -> MisMeeterControlValue {
-            let snapshot = SharedAppState.readSnapshot()
-            return MisMeeterControlValue(
-                isActive: snapshot.isReceiving,
-                isMuted: snapshot.isReceiveMuted
-            )
+        func currentValue() async throws -> Bool {
+            guard let snapshot = SharedAppState.readSnapshotIfAvailable() else {
+                throw ControlStateUnavailable()
+            }
+            return snapshot.isReceiveMuted
         }
     }
 
@@ -101,38 +78,26 @@ struct MisMeeterReceiveMuteControl: ControlWidget {
         StaticControlConfiguration(
             kind: SharedControlStateStore.Kinds.receive,
             provider: Provider()
-        ) { value in
+        ) { isMuted in
             ControlWidgetToggle(
                 "MisMeeter RX",
-                isOn: value.isMuted,
+                isOn: isMuted,
                 action: SetReceiveMuteControlIntent()
-            ) { isMuted in
+            ) { muted in
                 Label(
-                    value.isActive ? (isMuted ? "RX MUTED" : "RX ACTIVE") : "RX IDLE",
-                    systemImage: rxSymbol(
-                        active: value.isActive,
-                        muted: value.isActive && isMuted
-                    )
+                    muted ? "RX MUTED" : "RX ACTIVE",
+                    systemImage: muted ? "speaker.slash.fill" : "speaker.wave.3.fill"
                 )
-                .controlWidgetStatus(
-                    value.isActive
-                        ? (isMuted ? "RX audio muted" : "RX audio active")
-                        : "RX is not running"
-                )
-                .controlWidgetActionHint(
-                    value.isActive
-                        ? (isMuted ? "Unmute RX" : "Mute RX")
-                        : "Start RX in MisMeeter first"
-                )
+                .controlWidgetStatus(muted ? "RX audio muted" : "RX audio active")
+                .controlWidgetActionHint(muted ? "Unmute RX" : "Mute RX")
             }
             .tint(.red)
         }
         .displayName("MisMeeter RX Mute")
         .description("Mute or unmute MisMeeter receive playback.")
     }
+}
 
-    private func rxSymbol(active: Bool, muted: Bool) -> String {
-        guard active else { return "speaker" }
-        return muted ? "speaker.slash.fill" : "speaker.wave.3.fill"
-    }
+private struct ControlStateUnavailable: LocalizedError {
+    var errorDescription: String? { "MisMeeter control state is temporarily unavailable" }
 }

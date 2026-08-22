@@ -11,7 +11,6 @@ final class MisMeeterAppDelegate: NSObject, UIApplicationDelegate {
         // A LiveActivityIntent can launch this process in the background. Do not
         // publish the newly-created runtime's default idle state here: that would
         // overwrite the App Group snapshot before the Control intent completes.
-        MisMeeterRuntime.shared.invalidateSystemControlsOnly()
         return true
     }
 
@@ -20,7 +19,8 @@ final class MisMeeterAppDelegate: NSObject, UIApplicationDelegate {
         // background. Never publish runtime defaults from this lifecycle callback:
         // doing so can overwrite the App Group value that ControlValueProvider uses.
         // Runtime commands themselves publish authoritative state.
-        MisMeeterRuntime.shared.invalidateSystemControlsOnly()
+        // Intentionally no ControlCenter reload here. Runtime-originated state
+        // changes issue targeted reloads; an interacted Control reloads itself.
     }
 
     func applicationWillTerminate(_ application: UIApplication) {

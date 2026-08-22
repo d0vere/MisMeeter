@@ -16,9 +16,11 @@ final class MisMeeterAppDelegate: NSObject, UIApplicationDelegate {
     }
 
     func applicationDidEnterBackground(_ application: UIApplication) {
-        // Reassert the latest authoritative state when the UI leaves the foreground.
-        // This does not stop background audio; it only refreshes the system Controls.
-        MisMeeterRuntime.shared.refreshSystemControls()
+        // A Control's LiveActivityIntent may cold-launch the app directly into the
+        // background. Never publish runtime defaults from this lifecycle callback:
+        // doing so can overwrite the App Group value that ControlValueProvider uses.
+        // Runtime commands themselves publish authoritative state.
+        MisMeeterRuntime.shared.invalidateSystemControlsOnly()
     }
 
     func applicationWillTerminate(_ application: UIApplication) {

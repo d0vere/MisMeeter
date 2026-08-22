@@ -86,7 +86,7 @@ grep -Fq 'group.dev.mismeeter.app' MisMeeter/MisMeeter.entitlements
 grep -Fq 'group.dev.mismeeter.app' MisMeeterWidget/MisMeeterWidget.entitlements
 grep -Fq 'static let appGroup = "group.dev.mismeeter.app"' Shared/SharedAppState.swift
 grep -Fq 'CFBundleShortVersionString: "4.0.4"' project.yml
-grep -Fq 'CFBundleVersion: "104"' project.yml
+grep -Fq 'CFBundleVersion: "106"' project.yml
 
 
 echo 'MisMeeter package validation passed.'

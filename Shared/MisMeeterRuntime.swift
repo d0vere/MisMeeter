@@ -166,15 +166,38 @@ final class MisMeeterRuntime {
             transmitter.configure(preset: preset)
             transmitter.setMuted(false)
 
+            // Changing AVAudioSession from RX-only (.playback) to duplex
+            // (.playAndRecord) underneath a running AVAudioEngine can leave the
+            // input Audio Unit in an invalid/codec state on real devices. Quiesce
+            // RX first, establish the duplex session + microphone, then rebuild RX.
+            let hadReceiver = isReceiving
+            let savedReceivePreset = activeReceivePreset
+            let savedReceiveMute = isReceiveMuted
+            if hadReceiver {
+                receiver.stop(deactivateSession: false)
+            }
+
             do {
                 try transmitter.start()
                 try microphone.start(captureMode: captureMode)
+                if hadReceiver {
+                    try receiver.start(
+                        preset: savedReceivePreset,
+                        transmitterAlreadyActive: true
+                    )
+                    receiver.setOutputMuted(savedReceiveMute)
+                }
             } catch {
                 microphone.stop(deactivateSession: false)
                 transmitter.stop()
 
-                if isReceiving {
-                    receiver.refreshAudioSession(transmitterActive: false)
+                if hadReceiver {
+                    // Best-effort restoration of the pre-existing RX session.
+                    try? receiver.start(
+                        preset: savedReceivePreset,
+                        transmitterAlreadyActive: false
+                    )
+                    receiver.setOutputMuted(savedReceiveMute)
                 } else {
                     AudioSessionCoordinator.shared.deactivateIfPossible()
                 }
@@ -187,9 +210,6 @@ final class MisMeeterRuntime {
             stateQueue.sync {
                 _isStreaming = true
                 if _startedAt == nil { _startedAt = Date() }
-            }
-            if isReceiving {
-                receiver.refreshAudioSession(transmitterActive: true)
             }
             publishSharedState(status: isReceiving ? "Duplex live" : "Live")
             publishControlState(reloadControls: true)

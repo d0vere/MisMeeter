@@ -6,7 +6,7 @@ import os
 enum MicrophoneEngineError: LocalizedError {
     case noInput
     case audioUnitCreation(OSStatus)
-    case audioUnitConfiguration(OSStatus)
+    case audioUnitConfiguration(String, OSStatus)
 
     var errorDescription: String? {
         switch self {
@@ -14,8 +14,8 @@ enum MicrophoneEngineError: LocalizedError {
             return "No microphone input is available."
         case .audioUnitCreation(let status):
             return "Could not create microphone Audio Unit (\(status))."
-        case .audioUnitConfiguration(let status):
-            return "Could not configure microphone Audio Unit (\(status))."
+        case .audioUnitConfiguration(let stage, let status):
+            return "Could not configure microphone Audio Unit [\(stage)] (\(status))."
         }
     }
 }
@@ -100,7 +100,7 @@ final class MicrophoneEngine {
         )
         guard status == noErr else {
             cleanupAudioUnit()
-            throw MicrophoneEngineError.audioUnitConfiguration(status)
+            throw MicrophoneEngineError.audioUnitConfiguration("enable-input", status)
         }
 
         var disableOutput: UInt32 = 0
@@ -114,7 +114,7 @@ final class MicrophoneEngine {
         )
         guard status == noErr else {
             cleanupAudioUnit()
-            throw MicrophoneEngineError.audioUnitConfiguration(status)
+            throw MicrophoneEngineError.audioUnitConfiguration("disable-output", status)
         }
 
         // Keep the application side at the VBAN rate. RemoteIO can perform sample-rate
@@ -141,7 +141,7 @@ final class MicrophoneEngine {
         )
         guard status == noErr else {
             cleanupAudioUnit()
-            throw MicrophoneEngineError.audioUnitConfiguration(status)
+            throw MicrophoneEngineError.audioUnitConfiguration("stream-format", status)
         }
 
         // Bound callback size to the preallocated realtime buffers.
@@ -156,7 +156,7 @@ final class MicrophoneEngine {
         )
         guard status == noErr else {
             cleanupAudioUnit()
-            throw MicrophoneEngineError.audioUnitConfiguration(status)
+            throw MicrophoneEngineError.audioUnitConfiguration("maximum-frames", status)
         }
 
         var callback = AURenderCallbackStruct(
@@ -173,20 +173,20 @@ final class MicrophoneEngine {
         )
         guard status == noErr else {
             cleanupAudioUnit()
-            throw MicrophoneEngineError.audioUnitConfiguration(status)
+            throw MicrophoneEngineError.audioUnitConfiguration("input-callback", status)
         }
 
         status = AudioUnitInitialize(unit)
         guard status == noErr else {
             cleanupAudioUnit()
-            throw MicrophoneEngineError.audioUnitConfiguration(status)
+            throw MicrophoneEngineError.audioUnitConfiguration("initialize", status)
         }
 
         diagnosticsLock.withLock { $0 = DiagnosticsState() }
         status = AudioOutputUnitStart(unit)
         guard status == noErr else {
             cleanupAudioUnit()
-            throw MicrophoneEngineError.audioUnitConfiguration(status)
+            throw MicrophoneEngineError.audioUnitConfiguration("start", status)
         }
 
         startDiagnosticsTimer()

@@ -1,7 +1,7 @@
 import SwiftUI
 
 extension View {
-    func dashboardGlassCard() -> some View {
+    func glassCard() -> some View {
         self.background {
             RoundedRectangle(cornerRadius: 26, style: .continuous)
                 .fill(.ultraThinMaterial)

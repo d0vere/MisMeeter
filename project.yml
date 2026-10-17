@@ -24,7 +24,8 @@ targets:
     platform: iOS
     sources:
       - path: MisMeeter/MisMeeterApp.swift
-      - path: MisMeeter/ContentView.swift
+      - path: MisMeeter/DashboardView.swift
+      - path: MisMeeter/DashboardCardStyle.swift
       - path: MisMeeter/Assets.xcassets
       - path: Shared/AudioSessionCoordinator.swift
       - path: Shared/CaptureMode.swift

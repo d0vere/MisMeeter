@@ -19,5 +19,5 @@ import SwiftUI
     private func consume(_ data:Data) {
         do { let p=try VBANPacket(data:data); guard p.header.protocolType == .audio, p.header.streamName == streamName else{return}; audio.enqueue(try VBANPCM.decode(p)); packets += 1; if let last=lastRX { let expected=last &+ 1; let d=p.header.frameCounter &- expected; if p.header.frameCounter != expected && d < 4096 { lost += UInt64(d) } }; lastRX=p.header.frameCounter } catch { }
     }
-    private func transmit(payload:Data,frames:Int) { do { let h=try VBANHeader(sampleRate:48_000,samplesPerPacket:min(frames,256),channels:2,dataType:.int16,streamName:streamName,frameCounter:frame); frame &+= 1; socket.send(h.encoded()+payload) } catch {} }
+    private func transmit(payload:Data,frames:Int) { do { let h=try VBANHeader(sampleRate:48_000,samplesPerPacket:min(frames,256),channels:2,dataType:.int16,streamName:streamName,frameCounter:frame); let headerData = try h.encoded(); frame &+= 1; socket.send(headerData + payload) } catch {} }
 }

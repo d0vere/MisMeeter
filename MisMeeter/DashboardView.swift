@@ -19,7 +19,8 @@ struct DashboardView: View {
     @AppStorage("p3Stream") private var p3Stream = "MisMeeter3"
 
     @AppStorage("microphoneGainDB") private var gainDB = 12.0
-    @AppStorage("captureModeV21") private var captureModeRaw = CaptureMode.voiceProcessingIO.rawValue
+    @AppStorage("voiceProcessingEnabled") private var voiceProcessingEnabled = true
+    @AppStorage("automaticGainControlEnabled") private var automaticGainControlEnabled = true
 
     @AppStorage("selectedRXPreset") private var selectedRXPreset = 0
     @AppStorage("rx1Name") private var rx1Name = "Main"
@@ -76,7 +77,6 @@ struct DashboardView: View {
             selectedRXPreset = min(max(selectedRXPreset, 0), 2)
             editTXPreset = selectedTXPreset
             editRXPreset = selectedRXPreset
-            if CaptureMode(rawValue: captureModeRaw) == nil { captureModeRaw = CaptureMode.voiceProcessingIO.rawValue }
             wireCallbacks()
             MisMeeterRuntime.shared.gainDB = Float(gainDB)
             reconcile()
@@ -169,11 +169,23 @@ struct DashboardView: View {
             HStack { Label("Input gain", systemImage: "dial.medium.fill"); Spacer(); Text("+\(Int(gainDB)) dB").monospacedDigit() }
             Slider(value: $gainDB, in: 0...24, step: 1).onChange(of: gainDB) { _, v in MisMeeterRuntime.shared.gainDB = Float(v) }
             Divider()
-            HStack {
-                Label("Capture engine", systemImage: "waveform.badge.mic")
-                Spacer()
-                Picker("Capture", selection: $captureModeRaw) { ForEach(CaptureMode.allCases) { Text($0.title).tag($0.rawValue) } }.labelsHidden().pickerStyle(.menu).disabled(isStreaming)
+            Toggle(isOn: $voiceProcessingEnabled) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Label("Voice processing", systemImage: "waveform.badge.mic")
+                    Text("Noise suppression and voice isolation").font(.caption).foregroundStyle(.secondary)
+                }
             }
+            .onChange(of: voiceProcessingEnabled) { _, enabled in applyVoiceProcessing(enabled) }
+            Toggle(isOn: $automaticGainControlEnabled) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Label("Automatic gain control", systemImage: "waveform.path")
+                    Text("Automatic microphone level compensation").font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            .disabled(!voiceProcessingEnabled)
+            .onChange(of: automaticGainControlEnabled) { _, enabled in applyAGC(enabled) }
+            Text("VoiceProcessingIO remains the capture engine. Turning Voice processing off bypasses Apple's voice processing live without switching to RemoteIO.")
+                .font(.caption).foregroundStyle(.secondary)
         }.padding(18).glassCard()
     }
 
@@ -227,9 +239,7 @@ struct DashboardView: View {
 
     private var rxPresetCard: some View {
         presetCard(title: "Receive preset", icon: "dot.radiowaves.left.and.right", selection: $selectedRXPreset,
-                   names: [rx1Name, rx2Name, rx3Name], busy: switchingRX) { index in
-            changeRXPreset(to: index)
-        }
+                   names: [rx1Name, rx2Name, rx3Name], busy: switchingRX) { index in changeRXPreset(to: index) }
     }
 
     private var rxBuffer: some View {
@@ -365,9 +375,28 @@ struct DashboardView: View {
         guard !preset.host.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { await MainActor.run { alertMessage = "Enter the destination IPv4 address in Presets first." }; return }
         guard await AVAudioApplication.requestRecordPermission() else { await MainActor.run { alertMessage = "Microphone access is required to transmit audio." }; return }
         do {
-            try await MisMeeterRuntime.shared.start(preset: preset, gainDB: Float(gainDB), captureMode: CaptureMode(rawValue: captureModeRaw) ?? .voiceProcessingIO)
+            try await MisMeeterRuntime.shared.start(preset: preset, gainDB: Float(gainDB), captureMode: .voiceProcessingIO)
+            try MicrophoneEngine.setLiveVoiceProcessingEnabled(voiceProcessingEnabled)
+            if voiceProcessingEnabled { try MicrophoneEngine.setLiveAutomaticGainControlEnabled(automaticGainControlEnabled) }
             await MainActor.run { reconcile() }
         } catch { await MainActor.run { reconcile(); alertMessage = error.localizedDescription } }
+    }
+
+    private func applyVoiceProcessing(_ enabled: Bool) {
+        guard isStreaming else { return }
+        do {
+            try MicrophoneEngine.setLiveVoiceProcessingEnabled(enabled)
+            if enabled { try MicrophoneEngine.setLiveAutomaticGainControlEnabled(automaticGainControlEnabled) }
+        } catch {
+            voiceProcessingEnabled.toggle()
+            alertMessage = error.localizedDescription
+        }
+    }
+
+    private func applyAGC(_ enabled: Bool) {
+        guard isStreaming, voiceProcessingEnabled else { return }
+        do { try MicrophoneEngine.setLiveAutomaticGainControlEnabled(enabled) }
+        catch { automaticGainControlEnabled.toggle(); alertMessage = error.localizedDescription }
     }
 
     private func stopTX() async { await MisMeeterRuntime.shared.stop(); await MainActor.run { reconcile() } }

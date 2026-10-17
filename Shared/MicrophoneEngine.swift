@@ -10,12 +10,9 @@ enum MicrophoneEngineError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .noInput:
-            return "No microphone input is available."
-        case .audioUnitCreation(let status):
-            return "Could not create microphone Audio Unit (\(status))."
-        case .audioUnitConfiguration(let stage, let status):
-            return "Could not configure microphone Audio Unit [\(stage)] (\(status))."
+        case .noInput: return "No microphone input is available."
+        case .audioUnitCreation(let status): return "Could not create microphone Audio Unit (\(status))."
+        case .audioUnitConfiguration(let stage, let status): return "Could not configure microphone Audio Unit [\(stage)] (\(status))."
         }
     }
 }
@@ -26,6 +23,19 @@ final class MicrophoneEngine {
         var maxWallClockGapMS: Double = 0
         var latestMeter: Float = 0
         var latestFrames: Int = 0
+    }
+
+    private static let activeLock = NSLock()
+    private static weak var activeInstance: MicrophoneEngine?
+
+    static func setLiveVoiceProcessingEnabled(_ enabled: Bool) throws {
+        let instance = activeLock.withLock { activeInstance }
+        try instance?.setVoiceProcessingEnabled(enabled)
+    }
+
+    static func setLiveAutomaticGainControlEnabled(_ enabled: Bool) throws {
+        let instance = activeLock.withLock { activeInstance }
+        try instance?.setAutomaticGainControlEnabled(enabled)
     }
 
     private let transmitter: VBANTransmitter
@@ -41,13 +51,21 @@ final class MicrophoneEngine {
     private var voiceProcessingEnabled = true
     private var automaticGainControlEnabled = true
 
-    /// meter, callbackFrames, currentIOBufferDuration, maxCallbackGapMS
     var onDiagnostics: ((Float, Int, Double, Double) -> Void)?
     var onVoiceProcessingState: ((Bool) -> Void)?
 
-    init(transmitter: VBANTransmitter) { self.transmitter = transmitter }
+    init(transmitter: VBANTransmitter) {
+        self.transmitter = transmitter
+        Self.activeLock.withLock { Self.activeInstance = self }
+    }
 
-    deinit { stopDiagnosticsTimer(); cleanupAudioUnit() }
+    deinit {
+        stopDiagnosticsTimer()
+        cleanupAudioUnit()
+        Self.activeLock.withLock {
+            if Self.activeInstance === self { Self.activeInstance = nil }
+        }
+    }
 
     var gainDB: Float {
         get { gainLock.withLock { $0 } }
@@ -59,7 +77,7 @@ final class MicrophoneEngine {
             voiceProcessingEnabled = enabled
             guard let unit = audioUnit else { return }
             var bypass: UInt32 = enabled ? 0 : 1
-            let status = AudioUnitSetProperty(unit, kAUVoiceIOProperty_BypassVoiceProcessing, kAudioUnitScope_Global, 0, &bypass, UInt32(MemoryLayout<UInt32>.size))
+            let status = AudioUnitSetProperty(unit, kAUVoiceIOProperty_BypassVoiceProcessing, kAudioUnitScope_Global, 1, &bypass, UInt32(MemoryLayout<UInt32>.size))
             guard status == noErr else { throw MicrophoneEngineError.audioUnitConfiguration("voice-processing-bypass", status) }
             onVoiceProcessingState?(enabled)
         }
@@ -70,7 +88,7 @@ final class MicrophoneEngine {
             automaticGainControlEnabled = enabled
             guard let unit = audioUnit else { return }
             var agc: UInt32 = enabled ? 1 : 0
-            let status = AudioUnitSetProperty(unit, kAUVoiceIOProperty_VoiceProcessingEnableAGC, kAudioUnitScope_Global, 0, &agc, UInt32(MemoryLayout<UInt32>.size))
+            let status = AudioUnitSetProperty(unit, kAUVoiceIOProperty_VoiceProcessingEnableAGC, kAudioUnitScope_Global, 1, &agc, UInt32(MemoryLayout<UInt32>.size))
             guard status == noErr else { throw MicrophoneEngineError.audioUnitConfiguration("voice-processing-agc", status) }
         }
     }
@@ -111,10 +129,10 @@ final class MicrophoneEngine {
 
         processingLock.lock()
         var bypass: UInt32 = voiceProcessingEnabled ? 0 : 1
-        status = AudioUnitSetProperty(unit, kAUVoiceIOProperty_BypassVoiceProcessing, kAudioUnitScope_Global, 0, &bypass, UInt32(MemoryLayout<UInt32>.size))
+        status = AudioUnitSetProperty(unit, kAUVoiceIOProperty_BypassVoiceProcessing, kAudioUnitScope_Global, 1, &bypass, UInt32(MemoryLayout<UInt32>.size))
         if status == noErr {
             var agc: UInt32 = automaticGainControlEnabled ? 1 : 0
-            status = AudioUnitSetProperty(unit, kAUVoiceIOProperty_VoiceProcessingEnableAGC, kAudioUnitScope_Global, 0, &agc, UInt32(MemoryLayout<UInt32>.size))
+            status = AudioUnitSetProperty(unit, kAUVoiceIOProperty_VoiceProcessingEnableAGC, kAudioUnitScope_Global, 1, &agc, UInt32(MemoryLayout<UInt32>.size))
         }
         processingLock.unlock()
         guard status == noErr else { cleanupAudioUnit(); throw MicrophoneEngineError.audioUnitConfiguration("voice-processing-options", status) }
@@ -132,7 +150,9 @@ final class MicrophoneEngine {
     }
 
     func stop(deactivateSession: Bool = true) {
-        stopDiagnosticsTimer(); cleanupAudioUnit(); onVoiceProcessingState?(false)
+        stopDiagnosticsTimer()
+        cleanupAudioUnit()
+        onVoiceProcessingState?(false)
         if deactivateSession { AudioSessionCoordinator.shared.deactivateIfPossible() }
     }
 
@@ -147,28 +167,55 @@ final class MicrophoneEngine {
             return AudioUnitRender(unit, actionFlags, timeStamp, 1, frameCount, &list)
         }
         guard renderStatus == noErr else { return renderStatus }
-        let gain = gainLock.withLock { $0 }; let linearGain = powf(10, gain / 20); var peak: Float = 0
+        let gain = gainLock.withLock { $0 }
+        let linearGain = powf(10, gain / 20)
+        var peak: Float = 0
         int16Scratch.withUnsafeMutableBufferPointer { intPointer in
             floatRenderBuffer.withUnsafeBufferPointer { floatPointer in
-                for index in 0..<frames { let raw = floatPointer[index]; peak = max(peak, abs(raw)); let limited = tanhf(raw * linearGain); intPointer[index] = Int16(max(-1, min(1, limited)) * Float(Int16.max)) }
+                for index in 0..<frames {
+                    let raw = floatPointer[index]
+                    peak = max(peak, abs(raw))
+                    let limited = tanhf(raw * linearGain)
+                    intPointer[index] = Int16(max(-1, min(1, limited)) * Float(Int16.max))
+                }
             }
             if let baseAddress = intPointer.baseAddress { transmitter.sendPCM16(baseAddress, frameCount: frames) }
         }
         diagnosticsLock.withLock { state in
             if let previous = state.previousWallClockNS { state.maxWallClockGapMS = max(state.maxWallClockGapMS, Double(nowNS - previous) / 1_000_000.0) }
-            state.previousWallClockNS = nowNS; state.latestFrames = frames; state.latestMeter = min(1, peak * linearGain)
+            state.previousWallClockNS = nowNS
+            state.latestFrames = frames
+            state.latestMeter = min(1, peak * linearGain)
         }
         return noErr
     }
 
     private func startDiagnosticsTimer() {
-        stopDiagnosticsTimer(); let timer = DispatchSource.makeTimerSource(queue: diagnosticsQueue)
+        stopDiagnosticsTimer()
+        let timer = DispatchSource.makeTimerSource(queue: diagnosticsQueue)
         timer.schedule(deadline: .now() + .milliseconds(150), repeating: .milliseconds(250), leeway: .milliseconds(30))
-        timer.setEventHandler { [weak self] in guard let self else { return }; let snapshot = self.diagnosticsLock.withLock { ($0.latestMeter, $0.latestFrames, $0.maxWallClockGapMS) }; self.onDiagnostics?(snapshot.0, snapshot.1, AVAudioSession.sharedInstance().ioBufferDuration, snapshot.2) }
-        diagnosticsTimer = timer; timer.resume()
+        timer.setEventHandler { [weak self] in
+            guard let self else { return }
+            let snapshot = self.diagnosticsLock.withLock { ($0.latestMeter, $0.latestFrames, $0.maxWallClockGapMS) }
+            self.onDiagnostics?(snapshot.0, snapshot.1, AVAudioSession.sharedInstance().ioBufferDuration, snapshot.2)
+        }
+        diagnosticsTimer = timer
+        timer.resume()
     }
-    private func stopDiagnosticsTimer() { diagnosticsTimer?.setEventHandler {}; diagnosticsTimer?.cancel(); diagnosticsTimer = nil }
-    private func cleanupAudioUnit() { guard let unit = audioUnit else { return }; _ = AudioOutputUnitStop(unit); _ = AudioUnitUninitialize(unit); AudioComponentInstanceDispose(unit); audioUnit = nil }
+
+    private func stopDiagnosticsTimer() {
+        diagnosticsTimer?.setEventHandler {}
+        diagnosticsTimer?.cancel()
+        diagnosticsTimer = nil
+    }
+
+    private func cleanupAudioUnit() {
+        guard let unit = audioUnit else { return }
+        _ = AudioOutputUnitStop(unit)
+        _ = AudioUnitUninitialize(unit)
+        AudioComponentInstanceDispose(unit)
+        audioUnit = nil
+    }
 }
 
 private let microphoneRenderCallback: AURenderCallback = { refCon, actionFlags, timeStamp, _, frameCount, _ in

@@ -58,14 +58,15 @@ struct DashboardView: View {
 
     var body: some View {
         ZStack(alignment: .bottom) {
-            TabView(selection: $selectedTab) {
-                NavigationStack { txHome }.tag(DashboardSection.transmit)
-                NavigationStack { rxHome }.tag(DashboardSection.receive)
-                NavigationStack { presets }.tag(DashboardSection.presets)
-                NavigationStack { settings }.tag(DashboardSection.settings)
+            NavigationStack {
+                TabView(selection: $selectedTab) {
+                    txHome.tag(DashboardSection.transmit)
+                    rxHome.tag(DashboardSection.receive)
+                    presets.tag(DashboardSection.presets)
+                    settings.tag(DashboardSection.settings)
+                }
+                .tabViewStyle(.page(indexDisplayMode: .never))
             }
-            .tabViewStyle(.page(indexDisplayMode: .never))
-            .ignoresSafeArea(.keyboard, edges: .bottom)
 
             if !isEditingPreset { navigationBar.padding(.bottom, 8) }
         }

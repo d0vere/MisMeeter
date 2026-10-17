@@ -53,15 +53,40 @@ struct VBANPacket: Sendable {
 }
 
 enum VBANPCM {
+    private static func u32LE(_ p: [UInt8], _ i: Int) -> UInt32 {
+        let b0 = UInt32(p[i])
+        let b1 = UInt32(p[i + 1]) << 8
+        let b2 = UInt32(p[i + 2]) << 16
+        let b3 = UInt32(p[i + 3]) << 24
+        return b0 | b1 | b2 | b3
+    }
+
     static func decode(_ packet: VBANPacket) throws -> [Float] {
         let p = [UInt8](packet.payload)
         switch packet.header.dataType {
-        case .uint8: return p.map { (Float($0) - 128) / 128 }
-        case .int16: return stride(from: 0, to: p.count, by: 2).map { Float(Int16(bitPattern: UInt16(p[$0]) | UInt16(p[$0+1]) << 8)) / 32768 }
-        case .int24: return stride(from: 0, to: p.count, by: 3).map { i in var v = Int32(p[i]) | Int32(p[i+1]) << 8 | Int32(p[i+2]) << 16; if v & 0x800000 != 0 { v |= ~0xFFFFFF }; return Float(v) / 8_388_608 }
-        case .int32: return stride(from: 0, to: p.count, by: 4).map { i in let v = UInt32(p[i]) | UInt32(p[i+1]) << 8 | UInt32(p[i+2]) << 16 | UInt32(p[i+3]) << 24; return Float(Int32(bitPattern: v)) / 2_147_483_648 }
-        case .float32: return stride(from: 0, to: p.count, by: 4).map { i in Float(bitPattern: UInt32(p[i]) | UInt32(p[i+1]) << 8 | UInt32(p[i+2]) << 16 | UInt32(p[i+3]) << 24) }
-        default: throw VBANError.invalidFormat
+        case .uint8:
+            return p.map { (Float($0) - 128) / 128 }
+        case .int16:
+            return stride(from: 0, to: p.count, by: 2).map { i in
+                let bits = UInt16(p[i]) | (UInt16(p[i + 1]) << 8)
+                return Float(Int16(bitPattern: bits)) / 32768
+            }
+        case .int24:
+            return stride(from: 0, to: p.count, by: 3).map { i in
+                var value = Int32(p[i]) | (Int32(p[i + 1]) << 8) | (Int32(p[i + 2]) << 16)
+                if value & 0x800000 != 0 { value |= ~0xFFFFFF }
+                return Float(value) / 8_388_608
+            }
+        case .int32:
+            return stride(from: 0, to: p.count, by: 4).map { i in
+                Float(Int32(bitPattern: u32LE(p, i))) / 2_147_483_648
+            }
+        case .float32:
+            return stride(from: 0, to: p.count, by: 4).map { i in
+                Float(bitPattern: u32LE(p, i))
+            }
+        default:
+            throw VBANError.invalidFormat
         }
     }
     static func encodeInt16(_ samples: UnsafePointer<Float>, count: Int) -> Data {

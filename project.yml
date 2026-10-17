@@ -1,52 +1,32 @@
 name: MisMeeter
-
 options:
   bundleIdPrefix: dev.mismeeter
   deploymentTarget:
-    iOS: "18.5"
-
+    iOS: "16.0"
 settings:
   base:
     SWIFT_VERSION: "5.0"
-    IPHONEOS_DEPLOYMENT_TARGET: "18.5"
+    IPHONEOS_DEPLOYMENT_TARGET: "16.0"
     TARGETED_DEVICE_FAMILY: "1"
-
 schemes:
   MisMeeter:
     build:
       targets:
         MisMeeter: all
-        MisMeeterWidget: all
-
 targets:
   MisMeeter:
     type: application
     platform: iOS
-    # Intentionally explicit. Do not replace this with `path: Shared` or `path: MisMeeter`.
-    # XcodeGen recursively includes every file in a directory; an old tracked source
-    # copied over from a previous release could otherwise silently re-enter the build.
     sources:
       - path: MisMeeter/MisMeeterApp.swift
-      - path: MisMeeter/ContentView.swift
+      - path: MisMeeter/MainView.swift
+      - path: MisMeeter/MainViewModel.swift
+      - path: MisMeeter/SettingsView.swift
+      - path: MisMeeter/VUMeterView.swift
+      - path: MisMeeter/Core/VBANHeader.swift
+      - path: MisMeeter/Core/VBANSocketManager.swift
+      - path: MisMeeter/Core/AudioEngineService.swift
       - path: MisMeeter/Assets.xcassets
-      - path: Shared/AudioSessionCoordinator.swift
-      - path: Shared/CaptureMode.swift
-      - path: Shared/EndLiveActivityIntent.swift
-      - path: Shared/MicActivityAttributes.swift
-      - path: Shared/MicrophoneEngine.swift
-      - path: Shared/MisMeeterRuntime.swift
-      - path: Shared/PlaybackRingBuffer.swift
-      - path: Shared/SharedAppState.swift
-      - path: Shared/SharedControlState.swift
-      - path: Shared/SetMicrophoneMuteControlIntent.swift
-      - path: Shared/SetReceiveMuteControlIntent.swift
-      - path: Shared/ToggleMuteIntent.swift
-      - path: Shared/ToggleReceiveMuteIntent.swift
-      - path: Shared/VBANPacket.swift
-      - path: Shared/VBANPreset.swift
-      - path: Shared/VBANReceivePreset.swift
-      - path: Shared/VBANReceiver.swift
-      - path: Shared/VBANTransmitter.swift
     info:
       path: MisMeeter/Generated-Info.plist
       properties:
@@ -56,18 +36,13 @@ targets:
         CFBundleInfoDictionaryVersion: "6.0"
         CFBundleName: $(PRODUCT_NAME)
         CFBundlePackageType: APPL
-        CFBundleShortVersionString: "4.0.4"
-        CFBundleVersion: "110"
+        CFBundleShortVersionString: "5.0.0"
+        CFBundleVersion: "500"
         LSRequiresIPhoneOS: true
-        NSSupportsLiveActivities: true
-        NSMicrophoneUsageDescription: "MisMeeter uses the iPhone microphone to transmit live audio to your VBAN destination."
-        NSLocalNetworkUsageDescription: "MisMeeter sends and receives VBAN audio on your local network."
+        NSMicrophoneUsageDescription: "MisMeeter uses the microphone to transmit live VBAN audio on your local network."
+        NSLocalNetworkUsageDescription: "MisMeeter sends and receives VBAN audio streams on your local network."
         UIBackgroundModes:
           - audio
-        CFBundleURLTypes:
-          - CFBundleURLName: dev.mismeeter.app
-            CFBundleURLSchemes:
-              - mismeeter
         UILaunchScreen: {}
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
@@ -78,48 +53,3 @@ targets:
         GENERATE_INFOPLIST_FILE: NO
         TARGETED_DEVICE_FAMILY: "1"
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
-        CODE_SIGN_ENTITLEMENTS: MisMeeter/MisMeeter.entitlements
-        SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) MISMEETER_APP"
-    dependencies:
-      - target: MisMeeterWidget
-        embed: true
-
-  MisMeeterWidget:
-    type: app-extension
-    platform: iOS
-    # Explicit source membership for the extension for the same stale-file reason.
-    sources:
-      - path: MisMeeterWidget/MisMeeterLiveActivity.swift
-      - path: MisMeeterWidget/MisMeeterStatusWidget.swift
-      - path: MisMeeterWidget/MisMeeterSystemControls.swift
-      - path: MisMeeterWidget/MisMeeterWidgetBundle.swift
-      - path: Shared/MicActivityAttributes.swift
-      - path: Shared/SharedAppState.swift
-      - path: Shared/SharedControlState.swift
-      - path: Shared/SetMicrophoneMuteControlIntent.swift
-      - path: Shared/SetReceiveMuteControlIntent.swift
-      - path: Shared/ToggleMuteIntent.swift
-      - path: Shared/ToggleReceiveMuteIntent.swift
-      - path: Shared/EndLiveActivityIntent.swift
-    info:
-      path: MisMeeterWidget/Generated-Info.plist
-      properties:
-        CFBundleDisplayName: MisMeeter
-        CFBundleExecutable: $(EXECUTABLE_NAME)
-        CFBundleIdentifier: $(PRODUCT_BUNDLE_IDENTIFIER)
-        CFBundleInfoDictionaryVersion: "6.0"
-        CFBundleName: $(PRODUCT_NAME)
-        CFBundlePackageType: XPC!
-        CFBundleShortVersionString: "4.0.4"
-        CFBundleVersion: "110"
-        NSExtension:
-          NSExtensionPointIdentifier: com.apple.widgetkit-extension
-    settings:
-      base:
-        PRODUCT_BUNDLE_IDENTIFIER: dev.mismeeter.app.widget
-        PRODUCT_NAME: MisMeeterWidget
-        GENERATE_INFOPLIST_FILE: NO
-        SKIP_INSTALL: YES
-        TARGETED_DEVICE_FAMILY: "1"
-        CODE_SIGN_ENTITLEMENTS: MisMeeterWidget/MisMeeterWidget.entitlements
-        SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) MISMEETER_WIDGET"

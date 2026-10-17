@@ -58,14 +58,15 @@ struct DashboardView: View {
 
     var body: some View {
         ZStack(alignment: .bottom) {
-            TabView(selection: $selectedTab) {
-                NavigationStack { txHome }.tag(DashboardSection.transmit)
-                NavigationStack { rxHome }.tag(DashboardSection.receive)
-                NavigationStack { presets }.tag(DashboardSection.presets)
-                NavigationStack { settings }.tag(DashboardSection.settings)
+            NavigationStack {
+                TabView(selection: $selectedTab) {
+                    txHome.tag(DashboardSection.transmit)
+                    rxHome.tag(DashboardSection.receive)
+                    presets.tag(DashboardSection.presets)
+                    settings.tag(DashboardSection.settings)
+                }
+                .tabViewStyle(.page(indexDisplayMode: .never))
             }
-            .tabViewStyle(.page(indexDisplayMode: .never))
-            .ignoresSafeArea(.keyboard, edges: .bottom)
 
             if !isEditingPreset { navigationBar.padding(.bottom, 8) }
         }
@@ -266,18 +267,19 @@ struct DashboardView: View {
                             Text(names[index].isEmpty ? "Preset \(index + 1)" : names[index]).font(.subheadline.weight(.semibold)).lineLimit(1)
                         }
                         .frame(maxWidth: .infinity).padding(.vertical, 11)
-                        .background(selection.wrappedValue == index ? Color.accentColor.opacity(0.16) : Color.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-                        .overlay { RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(selection.wrappedValue == index ? Color.accentColor.opacity(0.55) : Color.clear, lineWidth: 1) }
+                        .background(selection.wrappedValue == index ? Color.accentColor.opacity(0.16) : Color.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(selection.wrappedValue == index ? Color.accentColor.opacity(0.65) : Color.primary.opacity(0.06), lineWidth: 1))
                     }.buttonStyle(.plain).disabled(busy)
                 }
             }
+            Text("Tap a preset to make it active. If audio is running, MisMeeter switches using the existing audio/network runtime.").font(.caption).foregroundStyle(.secondary)
         }.padding(18).glassCard()
     }
 
     private var presets: some View {
         Form {
             Section {
-                Picker("Edit TX preset", selection: $editTXPreset) { Text(p1Name).tag(0); Text(p2Name).tag(1); Text(p3Name).tag(2) }.pickerStyle(.segmented)
+                Picker("Edit TX preset", selection: $editTXPreset) { ForEach(0..<3, id: \.self) { Text("\($0 + 1)").tag($0) } }.pickerStyle(.segmented)
                 TextField("Preset name", text: editTXName).focused($isEditingPreset)
                 TextField("Destination IPv4", text: editTXHost).focused($isEditingPreset).keyboardType(.numbersAndPunctuation).textInputAutocapitalization(.never).autocorrectionDisabled()
                 TextField("UDP port", text: editTXPort).focused($isEditingPreset).keyboardType(.numberPad)
@@ -286,7 +288,7 @@ struct DashboardView: View {
               footer: { Text("Configure the three Send presets here. Choose the active one from the Send screen, even while streaming.") }
 
             Section {
-                Picker("Edit RX preset", selection: $editRXPreset) { Text(rx1Name).tag(0); Text(rx2Name).tag(1); Text(rx3Name).tag(2) }.pickerStyle(.segmented)
+                Picker("Edit RX preset", selection: $editRXPreset) { ForEach(0..<3, id: \.self) { Text("\($0 + 1)").tag($0) } }.pickerStyle(.segmented)
                 TextField("Preset name", text: editRXName).focused($isEditingPreset)
                 TextField("Listen port", text: editRXPort).focused($isEditingPreset).keyboardType(.numberPad)
                 TextField("VBAN stream", text: editRXStream).focused($isEditingPreset).textInputAutocapitalization(.never).autocorrectionDisabled()
@@ -298,131 +300,100 @@ struct DashboardView: View {
 
     private var settings: some View {
         Form {
-            Section("Audio & network baseline") {
-                Label("Core Audio realtime capture", systemImage: "checkmark.seal.fill")
-                Label("Audio-clocked nonblocking UDP", systemImage: "checkmark.seal.fill")
-                Label("Adaptive RX jitter buffer", systemImage: "checkmark.seal.fill")
-                Text("The known-good audio and VBAN networking pipeline is preserved. Live preset changes restart only the affected stream using the same runtime stack.").font(.footnote).foregroundStyle(.secondary)
+            Section("Audio") {
+                LabeledContent("Sample rate", value: "48 kHz")
+                LabeledContent("Format", value: "PCM 16-bit")
+                LabeledContent("Packet audio", value: "256 frames")
+                LabeledContent("RX jitter", value: "Automatic")
             }
-            Section("Transport") { metric("Packets sent", packetsSent.formatted()); metric("Send errors", sendErrors.formatted()); metric("Max TX gap", String(format: "%.2f ms", maxSendGapMS)); metric("RX packets", rxPackets.formatted()); metric("RX lost", rxLost.formatted()) }
-            Section("About") { LabeledContent("Version", value: appVersion); LabeledContent("Audio", value: "48 kHz / PCM16 / VBAN"); LabeledContent("Minimum iOS", value: "18.5") }
+            Section("System") {
+                LabeledContent("Background audio", value: "Enabled")
+                LabeledContent("Control Center", value: "TX / RX mute")
+                LabeledContent("Live Activity", value: "Enabled")
+            }
         }.safeAreaPadding(.bottom, 86).navigationTitle("Settings")
     }
 
     private var navigationBar: some View {
         HStack(spacing: 4) {
-            ForEach(DashboardSection.allCases) { item in
-                Button { withAnimation(.smooth(duration: 0.24)) { selectedTab = item } } label: {
-                    VStack(spacing: 3) { Image(systemName: item.icon).font(.system(size: 16, weight: .semibold)); Text(item.title).font(.system(size: 9.5, weight: .semibold)) }
-                        .frame(width: 54, height: 48).foregroundStyle(selectedTab == item ? Color.primary : Color.secondary)
-                        .background { if selectedTab == item { Capsule().fill(Color.primary.opacity(0.075)) } }
+            ForEach(DashboardSection.allCases) { section in
+                Button {
+                    withAnimation(.snappy(duration: 0.24)) { selectedTab = section }
+                } label: {
+                    VStack(spacing: 3) {
+                        Image(systemName: section.icon).font(.system(size: 17, weight: selectedTab == section ? .semibold : .regular))
+                        Text(section.title).font(.caption2.weight(selectedTab == section ? .semibold : .regular))
+                    }.foregroundStyle(selectedTab == section ? Color.accentColor : Color.secondary).frame(maxWidth: .infinity).padding(.vertical, 8)
                 }.buttonStyle(.plain)
             }
-        }.padding(5).background { Capsule().fill(.ultraThinMaterial).overlay { Capsule().strokeBorder(Color.white.opacity(0.16), lineWidth: 0.7) }.shadow(color: .black.opacity(0.10), radius: 18, y: 8) }
+        }.padding(5).background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 22, style: .continuous)).overlay(RoundedRectangle(cornerRadius: 22, style: .continuous).stroke(.primary.opacity(0.08))).padding(.horizontal, 12).shadow(radius: 14, y: 7)
     }
 
-    private func statePill(_ active: Bool, muted: Bool, live: String) -> some View {
-        HStack(spacing: 6) { Circle().fill(active ? (muted ? Color.red : Color.green) : Color.secondary).frame(width: 8, height: 8); Text(active ? (muted ? "MUTED" : live) : "IDLE").font(.caption2.bold()) }
-            .padding(.horizontal, 10).padding(.vertical, 7).background(.thinMaterial, in: Capsule())
+    private var background: some View { LinearGradient(colors: [Color.accentColor.opacity(0.06), Color.clear], startPoint: .topLeading, endPoint: .center).ignoresSafeArea() }
+    private func metric(_ name: String, _ value: String) -> some View { HStack { Text(name).foregroundStyle(.secondary); Spacer(); Text(value).monospacedDigit() } }
+    private func statusCard(_ title: String, _ value: String, _ icon: String, _ positive: Bool) -> some View { VStack(alignment: .leading, spacing: 8) { Image(systemName: icon).foregroundStyle(positive ? .green : .secondary); Text(title).font(.caption).foregroundStyle(.secondary); Text(value).font(.headline).lineLimit(1) }.frame(maxWidth: .infinity, alignment: .leading).padding(16).glassCard() }
+    private func statePill(_ active: Bool, muted: Bool, live: String) -> some View { HStack(spacing: 6) { Circle().fill(muted ? .red : (active ? .green : .secondary)).frame(width: 7, height: 7); Text(muted ? "MUTED" : (active ? live : "IDLE")).font(.caption2.bold()) }.padding(.horizontal, 10).padding(.vertical, 6).background(.thinMaterial, in: Capsule()) }
+
+    private var txStatus: String { !isStreaming ? "Idle" : (isMuted ? "Muted" : "Streaming") }
+    private var rxStatus: String { !isReceiving ? "Idle" : (isReceiveMuted ? "Muted" : "Listening") }
+
+    private var displayedTX: VBANPreset { txPreset(selectedTXPreset) }
+    private var displayedRX: VBANReceivePreset { rxPreset(selectedRXPreset) }
+
+    private func txPreset(_ index: Int) -> VBANPreset {
+        let names = [p1Name, p2Name, p3Name], hosts = [p1Host, p2Host, p3Host], ports = [p1Port, p2Port, p3Port], streams = [p1Stream, p2Stream, p3Stream]
+        return VBANPreset(name: names[index], host: hosts[index], port: UInt16(ports[index]) ?? 6980, streamName: streams[index])
+    }
+    private func rxPreset(_ index: Int) -> VBANReceivePreset {
+        let names = [rx1Name, rx2Name, rx3Name], ports = [rx1Port, rx2Port, rx3Port], streams = [rx1Stream, rx2Stream, rx3Stream]
+        return VBANReceivePreset(name: names[index], port: UInt16(ports[index]) ?? 6980, streamName: streams[index])
     }
 
-    private func statusCard(_ title: String, _ value: String, _ icon: String, _ active: Bool) -> some View {
-        VStack(alignment: .leading, spacing: 8) { HStack { Image(systemName: icon).foregroundStyle(active ? .green : .secondary); Spacer(); Circle().fill(active ? Color.green : Color.secondary.opacity(0.5)).frame(width: 7, height: 7) }; Text(title).font(.caption.weight(.semibold)).foregroundStyle(.secondary); Text(value).font(.subheadline.weight(.semibold)).lineLimit(2) }
-            .frame(maxWidth: .infinity, alignment: .leading).padding(16).glassCard()
+    @MainActor private func startTX() async {
+        do { try await MisMeeterRuntime.shared.start(preset: displayedTX, gainDB: Float(gainDB), captureMode: CaptureMode(rawValue: captureModeRaw) ?? .voiceProcessingIO); reconcile() }
+        catch { alertMessage = error.localizedDescription; reconcile() }
     }
+    @MainActor private func stopTX() async { await MisMeeterRuntime.shared.stop(); reconcile() }
+    private func startRX() { do { try MisMeeterRuntime.shared.startReceiving(preset: displayedRX); reconcile() } catch { alertMessage = error.localizedDescription; reconcile() } }
+    private func stopRX() { MisMeeterRuntime.shared.stopReceiving(); reconcile() }
 
-    private func metric(_ label: String, _ value: String) -> some View { HStack { Text(label).foregroundStyle(.secondary); Spacer(); Text(value).font(.body.monospacedDigit().weight(.medium)) } }
-    private var background: some View { LinearGradient(colors: [Color.accentColor.opacity(0.10), .clear, Color.primary.opacity(0.025)], startPoint: .topLeading, endPoint: .bottomTrailing).ignoresSafeArea() }
-
-    private func changeTXPreset(to index: Int) async {
+    @MainActor private func changeTXPreset(to index: Int) async {
         guard isStreaming else { return }
-        switchingTX = true
-        let wasMuted = isMuted
+        switchingTX = true; defer { switchingTX = false }
         await MisMeeterRuntime.shared.stop()
-        await MainActor.run { reconcile() }
-        await startTX()
-        if wasMuted && MisMeeterRuntime.shared.isStreaming { _ = MisMeeterRuntime.shared.toggleMuted() }
-        await MainActor.run { reconcile(); switchingTX = false }
+        do { try await MisMeeterRuntime.shared.start(preset: txPreset(index), gainDB: Float(gainDB), captureMode: CaptureMode(rawValue: captureModeRaw) ?? .voiceProcessingIO) }
+        catch { alertMessage = "Preset \(index + 1): \(error.localizedDescription)" }
+        reconcile()
     }
-
     private func changeRXPreset(to index: Int) {
         guard isReceiving else { return }
         switchingRX = true
-        let wasMuted = isReceiveMuted
         MisMeeterRuntime.shared.stopReceiving()
-        do {
-            try MisMeeterRuntime.shared.startReceiving(preset: currentRX)
-            if wasMuted { _ = MisMeeterRuntime.shared.toggleReceiveMuted() }
-        } catch { alertMessage = error.localizedDescription }
-        reconcile(); switchingRX = false
-    }
-
-    private func startTX() async {
-        var preset = currentTX
-        guard let port = validPort(portString(forTX: selectedTXPreset)) else { await MainActor.run { alertMessage = "Enter a valid TX UDP port between 1 and 65535." }; return }
-        preset.port = port
-        guard !preset.host.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { await MainActor.run { alertMessage = "Enter the destination IPv4 address in Presets first." }; return }
-        guard await AVAudioApplication.requestRecordPermission() else { await MainActor.run { alertMessage = "Microphone access is required to transmit audio." }; return }
-        do {
-            try await MisMeeterRuntime.shared.start(preset: preset, gainDB: Float(gainDB), captureMode: CaptureMode(rawValue: captureModeRaw) ?? .voiceProcessingIO)
-            await MainActor.run { reconcile() }
-        } catch { await MainActor.run { reconcile(); alertMessage = error.localizedDescription } }
-    }
-
-    private func stopTX() async { await MisMeeterRuntime.shared.stop(); await MainActor.run { reconcile() } }
-    private func startRX() { do { try MisMeeterRuntime.shared.startReceiving(preset: currentRX); reconcile() } catch { alertMessage = error.localizedDescription } }
-    private func stopRX() { MisMeeterRuntime.shared.stopReceiving(); reconcile() }
-
-    private func reconcile() {
-        let r = MisMeeterRuntime.shared
-        isStreaming = r.isStreaming; isMuted = r.isStreaming ? r.isMuted : false
-        isReceiving = r.isReceiving; isReceiveMuted = r.isReceiving ? r.isReceiveMuted : false
-        if !r.isStreaming { meter = 0 }
+        do { try MisMeeterRuntime.shared.startReceiving(preset: rxPreset(index)) }
+        catch { alertMessage = "Preset \(index + 1): \(error.localizedDescription)" }
+        switchingRX = false; reconcile()
     }
 
     private func wireCallbacks() {
-        let r = MisMeeterRuntime.shared
-        r.onMicrophoneDiagnostics = { value, _, _, _ in DispatchQueue.main.async { meter = value } }
-        r.onTransmitterDiagnostics = { sent, errors, capture, tx, gap in DispatchQueue.main.async { packetsSent = sent; sendErrors = errors; measuredCaptureHz = capture; effectiveTXHz = tx; maxSendGapMS = gap } }
-        r.onReceiverDiagnostics = { received, _, lost, buffered, underflows, _, rate, target in DispatchQueue.main.async { rxPackets = received; rxLost = lost; rxBufferedFrames = buffered; rxUnderflows = underflows; rxPlaybackRate = rate; rxAdaptiveTargetMS = target } }
-        r.onTransportSnapshotChange = { _ in DispatchQueue.main.async { reconcile() } }
+        MisMeeterRuntime.shared.onMeter = { value in Task { @MainActor in meter = value } }
+        MisMeeterRuntime.shared.onDiagnostics = { p, e, g, c, t in Task { @MainActor in packetsSent = p; sendErrors = e; maxSendGapMS = g; measuredCaptureHz = c; effectiveTXHz = t } }
+        MisMeeterRuntime.shared.onReceiveDiagnostics = { p, l, u, b, r, target in Task { @MainActor in rxPackets = p; rxLost = l; rxUnderflows = u; rxBufferedFrames = b; rxPlaybackRate = r; rxAdaptiveTargetMS = target } }
     }
+    private func reconcile() { isStreaming = MisMeeterRuntime.shared.isStreaming; isMuted = MisMeeterRuntime.shared.isMuted; isReceiving = MisMeeterRuntime.shared.isReceiving; isReceiveMuted = MisMeeterRuntime.shared.isReceiveMuted }
 
-    private func validPort(_ s: String) -> UInt16? { guard let p = UInt16(s.trimmingCharacters(in: .whitespacesAndNewlines)), p > 0 else { return nil }; return p }
-    private func portString(forTX i: Int) -> String { i == 1 ? p2Port : (i == 2 ? p3Port : p1Port) }
-
-    private var currentTX: VBANPreset {
-        switch selectedTXPreset {
-        case 1: return VBANPreset(name: p2Name, host: p2Host, port: validPort(p2Port) ?? 6980, streamName: p2Stream)
-        case 2: return VBANPreset(name: p3Name, host: p3Host, port: validPort(p3Port) ?? 6980, streamName: p3Stream)
-        default: return VBANPreset(name: p1Name, host: p1Host, port: validPort(p1Port) ?? 6980, streamName: p1Stream)
-        }
-    }
-    private var currentRX: VBANReceivePreset {
-        switch selectedRXPreset {
-        case 1: return VBANReceivePreset(name: rx2Name, port: validPort(rx2Port) ?? 6980, streamName: rx2Stream)
-        case 2: return VBANReceivePreset(name: rx3Name, port: validPort(rx3Port) ?? 6980, streamName: rx3Stream)
-        default: return VBANReceivePreset(name: rx1Name, port: validPort(rx1Port) ?? 6980, streamName: rx1Stream)
-        }
-    }
-    private var displayedTX: VBANPreset { isStreaming ? MisMeeterRuntime.shared.activePreset : currentTX }
-    private var displayedRX: VBANReceivePreset { isReceiving ? MisMeeterRuntime.shared.activeReceivePreset : currentRX }
-    private var txStatus: String { isStreaming ? (isMuted ? "Muted" : "Live") : "Ready" }
-    private var rxStatus: String { isReceiving ? (isReceiveMuted ? "Receive muted" : "Listening") : "Ready" }
-    private var appVersion: String { (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String) ?? "5.1.0" }
-
-    private var editTXName: Binding<String> { editTXPreset == 1 ? $p2Name : (editTXPreset == 2 ? $p3Name : $p1Name) }
-    private var editTXHost: Binding<String> { editTXPreset == 1 ? $p2Host : (editTXPreset == 2 ? $p3Host : $p1Host) }
-    private var editTXPort: Binding<String> { editTXPreset == 1 ? $p2Port : (editTXPreset == 2 ? $p3Port : $p1Port) }
-    private var editTXStream: Binding<String> { editTXPreset == 1 ? $p2Stream : (editTXPreset == 2 ? $p3Stream : $p1Stream) }
-    private var editRXName: Binding<String> { editRXPreset == 1 ? $rx2Name : (editRXPreset == 2 ? $rx3Name : $rx1Name) }
-    private var editRXPort: Binding<String> { editRXPreset == 1 ? $rx2Port : (editRXPreset == 2 ? $rx3Port : $rx1Port) }
-    private var editRXStream: Binding<String> { editRXPreset == 1 ? $rx2Stream : (editRXPreset == 2 ? $rx3Stream : $rx1Stream) }
+    private var editTXName: Binding<String> { binding(index: editTXPreset, values: ($p1Name, $p2Name, $p3Name)) }
+    private var editTXHost: Binding<String> { binding(index: editTXPreset, values: ($p1Host, $p2Host, $p3Host)) }
+    private var editTXPort: Binding<String> { binding(index: editTXPreset, values: ($p1Port, $p2Port, $p3Port)) }
+    private var editTXStream: Binding<String> { binding(index: editTXPreset, values: ($p1Stream, $p2Stream, $p3Stream)) }
+    private var editRXName: Binding<String> { binding(index: editRXPreset, values: ($rx1Name, $rx2Name, $rx3Name)) }
+    private var editRXPort: Binding<String> { binding(index: editRXPreset, values: ($rx1Port, $rx2Port, $rx3Port)) }
+    private var editRXStream: Binding<String> { binding(index: editRXPreset, values: ($rx1Stream, $rx2Stream, $rx3Stream)) }
+    private func binding(index: Int, values: (Binding<String>, Binding<String>, Binding<String>)) -> Binding<String> { switch index { case 1: values.1; case 2: values.2; default: values.0 } }
 }
 
-private enum DashboardSection: String, CaseIterable, Identifiable {
+private enum DashboardSection: Int, CaseIterable, Identifiable {
     case transmit, receive, presets, settings
-    var id: String { rawValue }
+    var id: Int { rawValue }
     var title: String { switch self { case .transmit: "Send"; case .receive: "Receive"; case .presets: "Presets"; case .settings: "Settings" } }
-    var icon: String { switch self { case .transmit: "mic.fill"; case .receive: "speaker.wave.2.fill"; case .presets: "slider.horizontal.3"; case .settings: "gearshape.fill" } }
+    var icon: String { switch self { case .transmit: "mic.fill"; case .receive: "speaker.wave.3.fill"; case .presets: "square.grid.2x2.fill"; case .settings: "gearshape.fill" } }
 }

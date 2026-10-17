@@ -30,23 +30,16 @@ jobs:
           test -d "$APP"
           rm -rf package && mkdir -p package/Payload
           cp -R "$APP" package/Payload/
-          cd package && /usr/bin/zip -qry "$GITHUB_WORKSPACE/MisMeeter-5.0.0-unsigned.ipa" Payload
-      - name: Upload workflow artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: MisMeeter-5.0.0-unsigned
-          path: MisMeeter-5.0.0-unsigned.ipa
-          if-no-files-found: error
-          retention-days: 30
-      - name: Publish v5.0.0 GitHub Release
+          cd package && /usr/bin/zip -qry "$GITHUB_WORKSPACE/MisMeeter-5.1.0-unsigned.ipa" Payload
+      - name: Publish GitHub Release with direct IPA asset
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if gh release view v5.0.0 >/dev/null 2>&1; then
-            gh release upload v5.0.0 MisMeeter-5.0.0-unsigned.ipa --clobber
+          if gh release view v5.1.0 >/dev/null 2>&1; then
+            gh release upload v5.1.0 MisMeeter-5.1.0-unsigned.ipa --clobber
           else
-            gh release create v5.0.0 MisMeeter-5.0.0-unsigned.ipa --target "$GITHUB_SHA" --title "MisMeeter 5.0.0" --notes "Complete low-latency VBAN/audio rewrite for iOS 16+. The unsigned IPA attached to this release is compiled and packaged entirely by GitHub Actions."
+            gh release create v5.1.0 MisMeeter-5.1.0-unsigned.ipa --target "$GITHUB_SHA" --title "MisMeeter 5.1.0" --notes "Known-good Core Audio/VBAN networking baseline with live preset switching. The release asset is the IPA itself, compiled by GitHub Actions."
           fi
       - name: Upload build log on failure
         if: failure()

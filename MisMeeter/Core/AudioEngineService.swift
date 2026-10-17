@@ -21,7 +21,7 @@ final class AudioEngineService {
 
     func start(sampleRate: Double = 48_000, channels: Int = 2, ioBuffer: TimeInterval = 0.005, capture: Bool) throws {
         stop(); self.sampleRate=sampleRate; self.channels=channels; ring=FloatRingBuffer(capacity:Int(sampleRate)*channels)
-        let session=AVAudioSession.sharedInstance(); try session.setCategory(.playAndRecord, mode:.measurement, options:[.allowBluetoothHFP,.allowAirPlay]); try session.setPreferredSampleRate(sampleRate); try session.setPreferredIOBufferDuration(ioBuffer); try session.setActive(true)
+        let session=AVAudioSession.sharedInstance(); try session.setCategory(.playAndRecord, mode:.measurement, options:[.allowBluetooth,.allowAirPlay]); try session.setPreferredSampleRate(sampleRate); try session.setPreferredIOBufferDuration(ioBuffer); try session.setActive(true)
         engine.attach(player); guard let format=AVAudioFormat(commonFormat:.pcmFormatFloat32, sampleRate:sampleRate, channels:AVAudioChannelCount(channels), interleaved:false) else { throw VBANError.invalidFormat }
         engine.connect(player,to:engine.mainMixerNode,format:format)
         if capture { let input=engine.inputNode; let inputFormat=input.outputFormat(forBus:0); input.installTap(onBus:0,bufferSize:256,format:inputFormat) { [weak self] buffer,_ in self?.capture(buffer) } }

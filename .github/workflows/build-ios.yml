@@ -2,6 +2,8 @@ name: Build and Release iOS IPA
 
 on:
   workflow_dispatch:
+  pull_request:
+    branches: [main]
   push:
     branches: [main]
     tags: ['v*']
@@ -41,8 +43,7 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         env:
           GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release create "$GITHUB_REF_NAME" MisMeeter-5.0.0-unsigned.ipa --title "MisMeeter 5.0.0" --notes "Complete low-latency VBAN core rewrite. IPA compiled entirely by GitHub Actions. Unsigned build for sideload signing workflows."
+        run: gh release create "$GITHUB_REF_NAME" MisMeeter-5.0.0-unsigned.ipa --title "MisMeeter 5.0.0" --notes "Complete low-latency VBAN core rewrite. IPA compiled entirely by GitHub Actions. Unsigned build for sideload signing workflows."
       - name: Upload build log on failure
         if: failure()
         uses: actions/upload-artifact@v4

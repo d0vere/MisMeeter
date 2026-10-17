@@ -1,8 +1,6 @@
 import SwiftUI
 import UIKit
 
-/// Bridges the small amount of process lifecycle state that system Controls need.
-/// Audio/background lifecycle remains owned by MisMeeterRuntime.
 final class MisMeeterAppDelegate: NSObject, UIApplicationDelegate {
     func application(
         _ application: UIApplication,
@@ -27,7 +25,7 @@ struct MisMeeterApp: App {
 
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            DashboardView()
         }
     }
 }
